@@ -1,35 +1,22 @@
-name: Build Life RPG Launcher
+name: Build Life RPG
 
 on:
   push:
-    tags:
+      tags:
       - "v*"
 
 jobs:
   build:
     runs-on: windows-latest
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install pyinstaller
-
-      - name: Build LifeRPG launcher (onedir only)
-        run: |
-          pyinstaller --noconsole --onedir --name LifeRPG bootstrap.py
-
-      - name: Upload LifeRPG folder to GitHub Release
-        uses: softprops/action-gh-release@v2
+      - run: pip install pyinstaller cryptography requests
+      - run: pyinstaller --onefile --noconsole bootstrap.py
+      - uses: softprops/action-gh-release@v2
         with:
-          files: dist/LifeRPG/**
+          files: dist/bootstrap.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
