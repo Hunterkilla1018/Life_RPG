@@ -5,19 +5,22 @@ import json
 import subprocess
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
-import urllib.request
 
-# =========================
-# App Metadata (SOURCE OF TRUTH)
-# =========================
-APP_NAME = "Life RPG"
+# =====================================================
+# VERSIONING (SINGLE SOURCE OF TRUTH)
+# =====================================================
+APP_NAME = "LifeRPG"
 APP_VERSION = "1.1.4"
 VERSION_FILE = "version.txt"
-GITHUB_REPO = "Hunterkilla1018/Life_RPG"
 
-# =========================
-# Files to Install
-# =========================
+# =====================================================
+# MODE SELECTION
+# =====================================================
+RUN_INSTALLER = "--install" in sys.argv
+
+# =====================================================
+# FILES TO INSTALL
+# =====================================================
 FILES = {
     "config.py": """APP_NAME = "Life RPG"
 SAVE_DIR = "life_rpg_save"
@@ -66,9 +69,9 @@ LifeRPGApp().mainloop()
     VERSION_FILE: APP_VERSION
 }
 
-# =========================
-# Helper Functions
-# =========================
+# =====================================================
+# HELPER FUNCTIONS
+# =====================================================
 def read_installed_version(path):
     try:
         with open(os.path.join(path, VERSION_FILE), "r", encoding="utf-8") as f:
@@ -77,33 +80,23 @@ def read_installed_version(path):
         return None
 
 
-def get_latest_version():
-    try:
-        with urllib.request.urlopen(
-            f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest",
-            timeout=5
-        ) as response:
-            data = json.loads(response.read().decode())
-            return data.get("tag_name", "").lstrip("v")
-    except Exception:
-        return None
+def get_app_executable_path():
+    """
+    Returns the path to LifeRPG.exe when running from a PyInstaller onedir build.
+    """
+    base_dir = os.path.dirname(sys.executable)
+    return os.path.join(base_dir, f"{APP_NAME}.exe")
 
 
-def is_newer_version(latest, current):
-    try:
-        return tuple(map(int, latest.split("."))) > tuple(map(int, current.split(".")))
-    except Exception:
-        return False
-
-# =========================
-# Installer GUI
-# =========================
+# =====================================================
+# INSTALLER GUI
+# =====================================================
 class Installer(tk.Tk):
     def __init__(self):
         super().__init__()
 
-        self.title(f"{APP_NAME} Installer")
-        self.geometry("560x340")
+        self.title("Life RPG Installer")
+        self.geometry("560x330")
         self.resizable(False, False)
         self.protocol("WM_DELETE_WINDOW", lambda: None)
 
@@ -112,7 +105,7 @@ class Installer(tk.Tk):
 
         ttk.Label(
             self,
-            text=f"{APP_NAME} Installer (v{APP_VERSION})",
+            text=f"Life RPG Installer (v{APP_VERSION})",
             font=("Segoe UI", 14)
         ).pack(pady=10)
 
@@ -138,7 +131,7 @@ class Installer(tk.Tk):
 
         ttk.Button(
             self,
-            text="Install / Update",
+            text="Install",
             command=self.install
         ).pack(pady=10)
 
@@ -151,24 +144,13 @@ class Installer(tk.Tk):
         base = self.install_dir.get()
 
         if not base:
-            messagebox.showerror(
-                "Error",
-                "Please choose an installation folder."
-            )
+            messagebox.showerror("Error", "Please choose an installation folder.")
             return
 
         os.makedirs(base, exist_ok=True)
         os.makedirs(os.path.join(base, "life_rpg_save"), exist_ok=True)
 
         installed_version = read_installed_version(base)
-        latest_version = get_latest_version()
-
-        if latest_version and is_newer_version(latest_version, APP_VERSION):
-            messagebox.showinfo(
-                "Update Available",
-                f"A newer version ({latest_version}) is available.\n"
-                f"You are installing v{APP_VERSION}."
-            )
 
         if installed_version:
             self.status.set(
@@ -198,20 +180,36 @@ class Installer(tk.Tk):
         self.update_idletasks()
         time.sleep(0.4)
 
-        # Clean shutdown + detached launch
+        # =================================================
+        # LAUNCH APP MODE AND EXIT INSTALLER CLEANLY
+        # =================================================
+        app_exe = get_app_executable_path()
+
         self.destroy()
+
         subprocess.Popen(
-            [sys.executable, "main.py"],
-            cwd=base,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            close_fds=True
+            [app_exe],
+            cwd=os.path.dirname(app_exe),
+            creationflags=subprocess.DETACHED_PROCESS
         )
 
-        os._exit(0)
+        sys.exit(0)
 
-# =========================
-# Entry Point
-# =========================
+
+# =====================================================
+# APP MODE (NORMAL RUN)
+# =====================================================
+def run_app():
+    from app_gui import LifeRPGApp
+    app = LifeRPGApp()
+    app.mainloop()
+
+
+# =====================================================
+# ENTRY POINT
+# =====================================================
 if __name__ == "__main__":
-    Installer().mainloop()
+    if RUN_INSTALLER:
+        Installer().mainloop()
+    else:
+        run_app()
