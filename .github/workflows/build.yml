@@ -2,6 +2,8 @@ name: Build Life RPG
 
 on:
   push:
+      tags:
+      - "v*"
 
 jobs:
   build:
