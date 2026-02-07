@@ -9,7 +9,7 @@ from tkinter import ttk, filedialog, messagebox
 # App Metadata
 # =========================
 APP_NAME = "Life RPG"
-APP_VERSION = "1.1.2"
+APP_VERSION = "1.1.3"
 VERSION_FILE = "version.txt"
 
 # =========================
