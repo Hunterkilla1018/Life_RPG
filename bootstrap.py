@@ -1,16 +1,19 @@
 import os
 import sys
 import time
+import json
 import subprocess
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
+import urllib.request
 
 # =========================
-# App Metadata
+# App Metadata (SOURCE OF TRUTH)
 # =========================
 APP_NAME = "Life RPG"
-APP_VERSION = "1.1.3"
+APP_VERSION = "1.1.4"
 VERSION_FILE = "version.txt"
+GITHUB_REPO = "Hunterkilla1018/Life_RPG"
 
 # =========================
 # Files to Install
@@ -73,6 +76,25 @@ def read_installed_version(path):
     except Exception:
         return None
 
+
+def get_latest_version():
+    try:
+        with urllib.request.urlopen(
+            f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest",
+            timeout=5
+        ) as response:
+            data = json.loads(response.read().decode())
+            return data.get("tag_name", "").lstrip("v")
+    except Exception:
+        return None
+
+
+def is_newer_version(latest, current):
+    try:
+        return tuple(map(int, latest.split("."))) > tuple(map(int, current.split(".")))
+    except Exception:
+        return False
+
 # =========================
 # Installer GUI
 # =========================
@@ -81,7 +103,7 @@ class Installer(tk.Tk):
         super().__init__()
 
         self.title(f"{APP_NAME} Installer")
-        self.geometry("540x300")
+        self.geometry("560x340")
         self.resizable(False, False)
         self.protocol("WM_DELETE_WINDOW", lambda: None)
 
@@ -100,7 +122,7 @@ class Installer(tk.Tk):
         ttk.Entry(
             path_frame,
             textvariable=self.install_dir,
-            width=48
+            width=50
         ).pack(side="left", padx=5)
 
         ttk.Button(
@@ -109,10 +131,10 @@ class Installer(tk.Tk):
             command=self.browse
         ).pack(side="left")
 
-        self.progress = ttk.Progressbar(self, length=480)
+        self.progress = ttk.Progressbar(self, length=500)
         self.progress.pack(pady=15)
 
-        ttk.Label(self, textvariable=self.status).pack()
+        ttk.Label(self, textvariable=self.status, wraplength=520).pack(pady=5)
 
         ttk.Button(
             self,
@@ -120,17 +142,11 @@ class Installer(tk.Tk):
             command=self.install
         ).pack(pady=10)
 
-    # -------------------------
-    # Folder picker
-    # -------------------------
     def browse(self):
         path = filedialog.askdirectory()
         if path:
             self.install_dir.set(path)
 
-    # -------------------------
-    # Install / Update logic
-    # -------------------------
     def install(self):
         base = self.install_dir.get()
 
@@ -145,16 +161,24 @@ class Installer(tk.Tk):
         os.makedirs(os.path.join(base, "life_rpg_save"), exist_ok=True)
 
         installed_version = read_installed_version(base)
+        latest_version = get_latest_version()
+
+        if latest_version and is_newer_version(latest_version, APP_VERSION):
+            messagebox.showinfo(
+                "Update Available",
+                f"A newer version ({latest_version}) is available.\n"
+                f"You are installing v{APP_VERSION}."
+            )
 
         if installed_version:
             self.status.set(
-                f"Existing install detected (v{installed_version}) → updating to v{APP_VERSION}"
+                f"Updating existing install (v{installed_version} → v{APP_VERSION})"
             )
         else:
-            self.status.set("Fresh install detected")
+            self.status.set("Performing fresh install")
 
         self.update_idletasks()
-        time.sleep(0.5)
+        time.sleep(0.4)
 
         self.progress["maximum"] = len(FILES)
         step = 0
@@ -166,7 +190,7 @@ class Installer(tk.Tk):
             with open(os.path.join(base, name), "w", encoding="utf-8") as f:
                 f.write(content)
 
-            time.sleep(0.15)
+            time.sleep(0.12)
             step += 1
             self.progress["value"] = step
 
@@ -174,11 +198,17 @@ class Installer(tk.Tk):
         self.update_idletasks()
         time.sleep(0.4)
 
+        # Clean shutdown + detached launch
         self.destroy()
         subprocess.Popen(
             [sys.executable, "main.py"],
-            cwd=base
+            cwd=base,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True
         )
+
+        os._exit(0)
 
 # =========================
 # Entry Point
