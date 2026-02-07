@@ -1,0 +1,22 @@
+name: Build Life RPG
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install pyinstaller cryptography requests
+      - run: pyinstaller --onefile --noconsole bootstrap.py
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/bootstrap.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
