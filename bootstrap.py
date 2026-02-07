@@ -92,3 +92,7 @@ class Installer(tk.Tk):
         ttk.Button(self, text="Install", command=self.install).pack(pady=10)
 
     def browse(self):
+    path = filedialog.askdirectory()
+    if path:
+        self.install_dir.set(path)
+
