@@ -16,18 +16,27 @@ jobs:
         with:
           python-version: "3.11"
 
-      - run: python -m pip install --upgrade pip
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip
+        shell: cmd
 
-      - run: pip install pyinstaller
+      - name: Install PyInstaller
+        run: pip install pyinstaller
+        shell: cmd
 
-      - run: |
+      - name: Clean previous build artifacts
+        run: |
           if exist dist rmdir /s /q dist
           if exist build rmdir /s /q build
           if exist LifeRPG.spec del LifeRPG.spec
+        shell: cmd
 
-      - run: pyinstaller -y --noconsole --onedir --name LifeRPG bootstrap.py
+      - name: Build LifeRPG executable (onedir)
+        run: pyinstaller -y --noconsole --onedir --name LifeRPG bootstrap.py
+        shell: cmd
 
-      - uses: softprops/action-gh-release@v2
+      - name: Upload LifeRPG build to GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
           files: dist/LifeRPG/**
         env:
