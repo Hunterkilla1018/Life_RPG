@@ -28,22 +28,13 @@ jobs:
       # Build Launcher (never self-updates)
       # --------------------------------------------------
       - name: Build Launcher
-        run: |
-          pyinstaller --onefile --noconsole --name LifeRPG_Launcher bootstrap.py
+        run: pyinstaller --onefile --noconsole --name LifeRPG_Launcher bootstrap.py
 
       # --------------------------------------------------
-      # Build Game (cryptography MUST be forced in)
+      # Build Game (PowerShell-safe, cryptography forced)
       # --------------------------------------------------
       - name: Build Game
-        run: |
-          pyinstaller --onefile --noconsole --name LifeRPG ^
-            --hidden-import=cryptography ^
-            --hidden-import=cryptography.fernet ^
-            --hidden-import=cryptography.hazmat ^
-            --hidden-import=cryptography.hazmat.backends ^
-            --hidden-import=cryptography.hazmat.bindings ^
-            --hidden-import=cryptography.hazmat.bindings.openssl ^
-            main.py
+        run: pyinstaller --onefile --noconsole --name LifeRPG --hidden-import=cryptography --hidden-import=cryptography.fernet --hidden-import=cryptography.hazmat --hidden-import=cryptography.hazmat.backends --hidden-import=cryptography.hazmat.bindings --hidden-import=cryptography.hazmat.bindings.openssl main.py
 
       # --------------------------------------------------
       # Create GitHub Release
