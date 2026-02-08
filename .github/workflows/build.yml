@@ -1,4 +1,4 @@
-name: Build Life RPG Launcher
+name: Build Life RPG
 
 on:
   push:
@@ -24,14 +24,23 @@ jobs:
           python -m pip install --upgrade pip
           pip install pyinstaller
 
-      - name: Build Launcher EXE
+      # -------- BUILD LAUNCHER --------
+      - name: Build Launcher
         run: |
           pyinstaller --onefile --noconsole --name LifeRPG_Launcher bootstrap.py
 
+      # -------- BUILD GAME --------
+      - name: Build Game
+        run: |
+          pyinstaller --onefile --noconsole --name LifeRPG main.py
+
+      # -------- RELEASE --------
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/LifeRPG_Launcher.exe
+          files: |
+            dist/LifeRPG_Launcher.exe
+            dist/LifeRPG.exe
           tag_name: ${{ github.ref_name }}
           name: Life RPG ${{ github.ref_name }}
         env:
