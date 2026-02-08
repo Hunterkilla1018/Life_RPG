@@ -16,7 +16,6 @@ CONFIG_FILE = os.path.join(CONFIG_DIR, "launcher.json")
 
 SAVE_DIR_NAME = "life_rpg_save"
 
-# --- REAL app files (minimal but valid) ---
 APP_FILES = {
     "main.py": """from app_gui import LifeRPGApp
 LifeRPGApp().mainloop()
@@ -66,7 +65,6 @@ def save_player(player):
     "version.txt": APP_VERSION + "\n",
 }
 
-# ---------------- Utility ----------------
 
 def load_config():
     if not os.path.exists(CONFIG_FILE):
@@ -92,15 +90,12 @@ def detect_install(path: str):
     return False, None
 
 
-# ---------------- Launcher ----------------
-
 class Launcher(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title(f"{APP_NAME} Launcher")
         self.geometry("620x400")
         self.resizable(False, False)
-        self.protocol("WM_DELETE_WINDOW", self.safe_exit)
 
         self.config_data = load_config()
         self.install_dir = tk.StringVar(
@@ -128,9 +123,6 @@ class Launcher(tk.Tk):
         ttk.Button(self, text="Save Directory", command=self.save_directory).pack()
 
         self.refresh_state()
-
-    def safe_exit(self):
-        self.destroy()
 
     def browse(self):
         path = filedialog.askdirectory(title="Choose install directory")
@@ -169,7 +161,7 @@ class Launcher(tk.Tk):
             self.status.set("No install detected")
             ttk.Button(self.buttons, text="Install", command=self.install).pack()
 
-    # -------- Actions --------
+    # ---- Install / Update / Repair ----
 
     def install(self):
         self.run_file_write("install")
@@ -205,18 +197,25 @@ class Launcher(tk.Tk):
         messagebox.showinfo("Done", f"{mode.capitalize()} completed successfully.")
         self.refresh_state()
 
+    # ---- FIXED LAUNCH ----
+
     def launch(self):
         base = self.install_dir.get()
         if not base:
             return
 
-        main_path = os.path.join(base, "main.py")
-        if not os.path.exists(main_path):
-            messagebox.showerror("Error", "main.py not found. Try Repair.")
+        exe_path = os.path.join(base, "LifeRPG.exe")
+
+        if not os.path.exists(exe_path):
+            messagebox.showerror(
+                "Launch Error",
+                "LifeRPG.exe was not found.\n\n"
+                "Please run Update or Repair."
+            )
             return
 
         subprocess.Popen(
-            ["python", "main.py"],
+            [exe_path],
             cwd=base,
             creationflags=subprocess.DETACHED_PROCESS
         )
