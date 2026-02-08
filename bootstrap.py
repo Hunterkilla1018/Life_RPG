@@ -12,7 +12,7 @@ from tkinter import ttk, filedialog
 # ============================================================
 
 APP_NAME = "Life RPG"
-LAUNCHER_VERSION = "1.5.0-alpha1-hotfix3"
+LAUNCHER_VERSION = "1.5.0-alpha1-hotfix4"
 
 GITHUB_OWNER = "Hunterkilla1018"
 GITHUB_REPO = "Life_RPG"
@@ -60,10 +60,13 @@ def load_config():
         "installed_version": "",
         "close_on_launch": True
     }
+
     if not os.path.exists(CONFIG_FILE):
         return defaults.copy()
 
-    data = json.load(open(CONFIG_FILE, "r", encoding="utf-8"))
+    with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
     for k, v in defaults.items():
         data.setdefault(k, v)
 
@@ -72,7 +75,8 @@ def load_config():
 
 def save_config(cfg):
     os.makedirs(APPDATA, exist_ok=True)
-    json.dump(cfg, open(CONFIG_FILE, "w", encoding="utf-8"), indent=4)
+    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, indent=4)
 
 def fetch_latest_release():
     url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest"
@@ -185,7 +189,7 @@ class Launcher(tk.Tk):
             self.after(0, lambda: self.apply_state("NOT_INSTALLED"))
             return
 
-        if installed != latest:
+        if not installed or installed != latest:
             self.after(0, lambda: self.apply_state("UPDATE_REQUIRED"))
             return
 
@@ -263,7 +267,8 @@ class Launcher(tk.Tk):
             return
 
         download(asset["browser_download_url"], MANIFEST_PATH)
-        self.manifest = json.load(open(MANIFEST_PATH, "r", encoding="utf-8"))
+        with open(MANIFEST_PATH, "r", encoding="utf-8") as f:
+            self.manifest = json.load(f)
 
     def verify_integrity(self, game_path):
         expected = self.manifest.get("files", {}).get(GAME_EXE)
@@ -308,7 +313,6 @@ class Launcher(tk.Tk):
         self.clear_primary_actions()
         self.update_status.set("READY")
         self._refresh_status_bar()
-
         ttk.Button(self.primary_action_frame, text="APPLY UPDATE",
                    command=self.apply_update).pack()
 
@@ -321,11 +325,21 @@ timeout /t 2 >nul
 move "{UPDATE_EXE}" "{game}"
 """)
 
-        self.cfg["installed_version"] = normalize_version(self.latest_release["tag_name"])
-        save_config(self.cfg)
+        def _apply_and_verify():
+            subprocess.call(["cmd", "/c", SWAP_SCRIPT])
 
-        subprocess.Popen(["cmd", "/c", SWAP_SCRIPT])
-        self.destroy()
+            if not os.path.exists(game):
+                self.after(0, lambda: self.apply_state("UPDATE_REQUIRED"))
+                return
+
+            self.cfg["installed_version"] = normalize_version(
+                self.latest_release["tag_name"]
+            )
+            save_config(self.cfg)
+
+            self.after(0, self.destroy)
+
+        threading.Thread(target=_apply_and_verify, daemon=True).start()
 
     def install(self):
         self.download_update()
