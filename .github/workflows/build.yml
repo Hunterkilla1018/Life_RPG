@@ -13,6 +13,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+	  - name: Build LifeRPG launcher (onedir only)
+		run: |
+		pyinstaller -y --noconsole --onedir --name LifeRPG bootstrap.py
+
       - run: pip install pyinstaller cryptography requests
       - run: pyinstaller --onefile --noconsole bootstrap.py
       - uses: softprops/action-gh-release@v2
