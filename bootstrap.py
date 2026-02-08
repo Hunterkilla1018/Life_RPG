@@ -6,14 +6,13 @@ import hashlib
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import urllib.request
-import time
 
 # ============================================================
 # Identity
 # ============================================================
 
 APP_NAME = "Life RPG"
-LAUNCHER_VERSION = "1.4.1"
+LAUNCHER_VERSION = "1.4.2"
 
 GITHUB_OWNER = "Hunterkilla1018"
 GITHUB_REPO = "Life_RPG"
@@ -28,24 +27,16 @@ SWAP_SCRIPT = "apply_update.bat"
 CONFIG_DIR = os.path.join(os.environ.get("APPDATA", os.getcwd()), "LifeRPG")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "launcher.json")
 
-CHECK_INTERVAL_MS = 60_000  # 1 minute
-
 # ============================================================
 # Helpers
 # ============================================================
-
-def sha256(path):
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(8192), b""):
-            h.update(chunk)
-    return h.hexdigest()
 
 def load_config():
     if not os.path.exists(CONFIG_FILE):
         return {
             "install_dir": "",
-            "close_on_launch": True
+            "close_on_launch": True,
+            "update_interval_min": 1
         }
     return json.load(open(CONFIG_FILE, "r", encoding="utf-8"))
 
@@ -67,20 +58,21 @@ class Launcher(tk.Tk):
         super().__init__()
 
         self.title(f"{APP_NAME} Launcher")
-        self.geometry("780x520")
+        self.geometry("780x540")
         self.resizable(False, False)
 
         self.config_data = load_config()
         self.install_dir = tk.StringVar(value=self.config_data.get("install_dir", ""))
         self.close_on_launch = tk.BooleanVar(value=self.config_data.get("close_on_launch", True))
+        self.update_interval = tk.IntVar(value=self.config_data.get("update_interval_min", 1))
 
         self.latest_release = None
-        self.last_checked_version = None
         self.update_ready = False
-        self.update_check_in_progress = False
+        self.update_check_running = False
+        self.after_id = None
 
         self.build_ui()
-        self.after(100, self.scheduled_update_check)
+        self.schedule_update_check()
 
     # --------------------------------------------------------
 
@@ -88,8 +80,11 @@ class Launcher(tk.Tk):
         top = ttk.Frame(self)
         top.pack(fill="x")
 
-        ttk.Label(top, text=f"{APP_NAME} v{LAUNCHER_VERSION}", font=("Segoe UI", 14))\
-            .pack(side="left", padx=10, pady=10)
+        ttk.Label(
+            top,
+            text=f"{APP_NAME} v{LAUNCHER_VERSION}",
+            font=("Segoe UI", 14)
+        ).pack(side="left", padx=10, pady=10)
 
         ttk.Button(top, text="⚙", command=self.open_settings)\
             .pack(side="right", padx=10)
@@ -123,7 +118,7 @@ class Launcher(tk.Tk):
     def open_settings(self):
         win = tk.Toplevel(self)
         win.title("Settings")
-        win.geometry("300x150")
+        win.geometry("320x220")
         win.resizable(False, False)
 
         ttk.Checkbutton(
@@ -131,11 +126,25 @@ class Launcher(tk.Tk):
             text="Close launcher when game launches",
             variable=self.close_on_launch,
             command=self.save_settings
-        ).pack(pady=20)
+        ).pack(pady=10)
+
+        ttk.Label(win, text="Check for updates every:").pack(pady=(10, 0))
+
+        interval_box = ttk.Combobox(
+            win,
+            values=[1, 5, 15, 30, 60],
+            textvariable=self.update_interval,
+            state="readonly",
+            width=10
+        )
+        interval_box.pack(pady=5)
+        interval_box.bind("<<ComboboxSelected>>", lambda e: self.save_settings())
 
     def save_settings(self):
         self.config_data["close_on_launch"] = self.close_on_launch.get()
+        self.config_data["update_interval_min"] = self.update_interval.get()
         save_config(self.config_data)
+        self.schedule_update_check()
 
     # --------------------------------------------------------
 
@@ -164,50 +173,41 @@ class Launcher(tk.Tk):
             ).pack(side="left", padx=5)
 
     # --------------------------------------------------------
-    # Scheduled update logic (POLISHED)
+    # Scheduled update logic
     # --------------------------------------------------------
 
-    def scheduled_update_check(self):
-        if not self.update_check_in_progress:
-            threading.Thread(target=self.check_for_updates, daemon=True).start()
+    def schedule_update_check(self):
+        if self.after_id:
+            self.after_cancel(self.after_id)
 
-        self.after(CHECK_INTERVAL_MS, self.scheduled_update_check)
+        interval_ms = self.update_interval.get() * 60_000
+        self.after_id = self.after(interval_ms, self.run_update_check)
+
+    def run_update_check(self):
+        if not self.update_check_running:
+            threading.Thread(target=self.check_for_updates, daemon=True).start()
+        self.schedule_update_check()
 
     def check_for_updates(self):
-        self.update_check_in_progress = True
-
+        self.update_check_running = True
         try:
-            release = fetch_latest_release()
-            latest_version = release.get("tag_name")
-
-            if self.last_checked_version == latest_version:
-                return
-
-            self.last_checked_version = latest_version
-            self.latest_release = release
-
+            self.status.set("Checking for updates…")
+            self.latest_release = fetch_latest_release()
             base = self.install_dir.get()
             game = os.path.join(base, GAME_EXE)
 
             if not os.path.exists(game):
                 return
 
-            self.status.set(f"Checking updates… ({latest_version})")
-
-            threading.Thread(
-                target=self.download_update,
-                daemon=True
-            ).start()
+            if not self.update_ready:
+                threading.Thread(target=self.download_update, daemon=True).start()
 
         finally:
-            self.update_check_in_progress = False
+            self.update_check_running = False
 
     # --------------------------------------------------------
 
     def download_update(self):
-        if self.update_ready:
-            return
-
         asset = next(a for a in self.latest_release["assets"] if a["name"] == GAME_EXE)
         url = asset["browser_download_url"]
 
