@@ -6,10 +6,12 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import urllib.request
 
-# ---------------- Identity ----------------
+# ============================================================
+# Identity
+# ============================================================
 
 APP_NAME = "Life RPG"
-LAUNCHER_VERSION = "1.3"
+LAUNCHER_VERSION = "1.3.1"
 
 GITHUB_OWNER = "Hunterkilla1018"
 GITHUB_REPO = "Life_RPG"
@@ -25,7 +27,52 @@ CONFIG_DIR = os.path.join(os.environ.get("APPDATA", os.getcwd()), "LifeRPG")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "launcher.json")
 
 
-# ---------------- Helpers ----------------
+# ============================================================
+# Managed file: storage.py
+# ============================================================
+
+STORAGE_PY_CONTENT = """\
+import os
+import json
+
+try:
+    from cryptography.fernet import Fernet
+except ImportError as e:
+    raise RuntimeError(
+        "Cryptography dependency missing.\\n\\n"
+        "The game was not packaged correctly.\\n"
+        "Please reinstall or update Life RPG."
+    ) from e
+
+
+SAVE_DIR = "life_rpg_save"
+PLAYER_FILE = os.path.join(SAVE_DIR, "player.json")
+
+os.makedirs(SAVE_DIR, exist_ok=True)
+
+
+def load_player():
+    if not os.path.exists(PLAYER_FILE):
+        return {"level": 1, "xp": 0}
+    with open(PLAYER_FILE, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def save_player(player):
+    with open(PLAYER_FILE, "w", encoding="utf-8") as f:
+        json.dump(player, f, indent=4)
+"""
+
+
+def write_storage_py(install_dir: str):
+    path = os.path.join(install_dir, "storage.py")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(STORAGE_PY_CONTENT)
+
+
+# ============================================================
+# Helpers
+# ============================================================
 
 def load_config():
     if not os.path.exists(CONFIG_FILE):
@@ -58,11 +105,14 @@ def fetch_latest_release():
         return None
 
 
-# ---------------- Launcher ----------------
+# ============================================================
+# Launcher
+# ============================================================
 
 class Launcher(tk.Tk):
     def __init__(self):
         super().__init__()
+
         self.title(f"{APP_NAME} Launcher")
         self.geometry("760x520")
         self.resizable(False, False)
@@ -98,7 +148,7 @@ class Launcher(tk.Tk):
         self.after(100, self.check_updates)
         self.refresh_state()
 
-    # ---------- UI helpers ----------
+    # --------------------------------------------------------
 
     def browse(self):
         path = filedialog.askdirectory(title="Choose install directory")
@@ -114,6 +164,8 @@ class Launcher(tk.Tk):
         save_config(self.config)
         self.refresh_state()
 
+    # --------------------------------------------------------
+
     def refresh_state(self):
         for w in self.buttons.winfo_children():
             w.destroy()
@@ -127,7 +179,6 @@ class Launcher(tk.Tk):
 
         if version:
             self.status.set(f"Installed game version: {version}")
-
             ttk.Button(self.buttons, text="Launch Game", command=self.launch).pack(side="left", padx=5)
             ttk.Button(self.buttons, text="Update", command=self.install_or_update).pack(side="left", padx=5)
             ttk.Button(self.buttons, text="Repair", command=self.install_or_update).pack(side="left", padx=5)
@@ -135,7 +186,7 @@ class Launcher(tk.Tk):
             self.status.set("Game not installed")
             ttk.Button(self.buttons, text="Install", command=self.install_or_update).pack()
 
-    # ---------- Update logic ----------
+    # --------------------------------------------------------
 
     def check_updates(self):
         self.latest_release = fetch_latest_release()
@@ -151,11 +202,13 @@ class Launcher(tk.Tk):
         if installed == latest:
             self.update_status.set("You are up to date")
         else:
-            self.update_status.set(f"Latest version: {latest}")
+            self.update_status.set(f"Latest version available: {latest}")
+
+    # --------------------------------------------------------
 
     def install_or_update(self):
         if not self.latest_release:
-            messagebox.showerror("Error", "No release info available.")
+            messagebox.showerror("Error", "No release information available.")
             return
         threading.Thread(target=self._download_and_apply, daemon=True).start()
 
@@ -191,12 +244,15 @@ class Launcher(tk.Tk):
                 if total:
                     self.progress["value"] = (read / total) * 100
 
+        # Write managed files
+        write_storage_py(base)
+
         with open(os.path.join(base, "version.txt"), "w", encoding="utf-8") as f:
             f.write(self.latest_release.get("tag_name", "unknown"))
 
         self._apply_update()
 
-    # ---------- Apply update ----------
+    # --------------------------------------------------------
 
     def _apply_update(self):
         base = self.install_dir.get()
@@ -219,7 +275,7 @@ start "" "{old_exe}"
         subprocess.Popen(["cmd", "/c", script], cwd=updates)
         self.destroy()
 
-    # ---------- Launch ----------
+    # --------------------------------------------------------
 
     def launch(self):
         base = self.install_dir.get()
@@ -236,6 +292,10 @@ start "" "{old_exe}"
 
         subprocess.Popen([game], cwd=base)
 
+
+# ============================================================
+# Entry
+# ============================================================
 
 if __name__ == "__main__":
     Launcher().mainloop()
