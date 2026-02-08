@@ -6,23 +6,26 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import urllib.request
 
+# ---------------- Identity ----------------
+
 APP_NAME = "Life RPG"
-APP_VERSION = "1.3-alpha3"
+LAUNCHER_VERSION = "1.3"
 
 GITHUB_OWNER = "Hunterkilla1018"
 GITHUB_REPO = "Life_RPG"
 
-CONFIG_DIR = os.path.join(os.environ.get("APPDATA", os.getcwd()), "LifeRPG")
-CONFIG_FILE = os.path.join(CONFIG_DIR, "launcher.json")
+GAME_EXE = "LifeRPG.exe"
+LAUNCHER_EXE = "LifeRPG_Launcher.exe"
 
 UPDATE_DIR = ".updates"
 UPDATE_EXE = "LifeRPG_update.exe"
-GAME_EXE = "LifeRPG.exe"
-LAUNCHER_EXE = "LifeRPG_Launcher.exe"
 SWAP_SCRIPT = "apply_update.bat"
 
+CONFIG_DIR = os.path.join(os.environ.get("APPDATA", os.getcwd()), "LifeRPG")
+CONFIG_FILE = os.path.join(CONFIG_DIR, "launcher.json")
 
-# ---------------- Config ----------------
+
+# ---------------- Helpers ----------------
 
 def load_config():
     if not os.path.exists(CONFIG_FILE):
@@ -38,7 +41,7 @@ def save_config(data):
     json.dump(data, open(CONFIG_FILE, "w", encoding="utf-8"), indent=4)
 
 
-def detect_version(path):
+def installed_game_version(path):
     try:
         with open(os.path.join(path, "version.txt"), "r", encoding="utf-8") as f:
             return f.read().strip()
@@ -61,7 +64,7 @@ class Launcher(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title(f"{APP_NAME} Launcher")
-        self.geometry("720x500")
+        self.geometry("760x520")
         self.resizable(False, False)
 
         self.config = load_config()
@@ -69,14 +72,18 @@ class Launcher(tk.Tk):
         self.status = tk.StringVar(value="Choose install directory")
         self.update_status = tk.StringVar(value="Checking for updates…")
 
-        ttk.Label(self, text=f"{APP_NAME} {APP_VERSION}", font=("Segoe UI", 14)).pack(pady=10)
+        ttk.Label(
+            self,
+            text=f"{APP_NAME} Launcher v{LAUNCHER_VERSION}",
+            font=("Segoe UI", 14)
+        ).pack(pady=10)
 
-        ttk.Entry(self, textvariable=self.install_dir, width=90).pack()
+        ttk.Entry(self, textvariable=self.install_dir, width=95).pack()
         ttk.Button(self, text="Browse…", command=self.browse).pack(pady=5)
 
         ttk.Label(self, textvariable=self.update_status).pack(pady=5)
 
-        self.progress = ttk.Progressbar(self, length=680)
+        self.progress = ttk.Progressbar(self, length=720)
         self.progress.pack(pady=10)
 
         ttk.Label(self, textvariable=self.status).pack(pady=5)
@@ -87,11 +94,11 @@ class Launcher(tk.Tk):
         ttk.Button(self, text="Save Directory", command=self.save_directory).pack()
 
         self.latest_release = None
-        self.after(100, self.check_updates)
 
+        self.after(100, self.check_updates)
         self.refresh_state()
 
-    # ---------- UI ----------
+    # ---------- UI helpers ----------
 
     def browse(self):
         path = filedialog.askdirectory(title="Choose install directory")
@@ -112,29 +119,28 @@ class Launcher(tk.Tk):
             w.destroy()
 
         base = self.install_dir.get()
-        installed_version = detect_version(base)
+        version = installed_game_version(base)
 
         if not base:
             self.status.set("No install directory selected")
             return
 
-        if installed_version:
-            self.status.set(f"Installed version: {installed_version}")
+        if version:
+            self.status.set(f"Installed game version: {version}")
 
-            ttk.Button(self.buttons, text="Launch", command=self.launch).pack(side="left", padx=5)
-            ttk.Button(self.buttons, text="Download Update", command=self.download_update).pack(side="left", padx=5)
-
-            if os.path.exists(os.path.join(base, UPDATE_DIR, UPDATE_EXE)):
-                ttk.Button(self.buttons, text="Apply Update", command=self.apply_update).pack(side="left", padx=5)
+            ttk.Button(self.buttons, text="Launch Game", command=self.launch).pack(side="left", padx=5)
+            ttk.Button(self.buttons, text="Update", command=self.install_or_update).pack(side="left", padx=5)
+            ttk.Button(self.buttons, text="Repair", command=self.install_or_update).pack(side="left", padx=5)
         else:
-            self.status.set("No install detected")
+            self.status.set("Game not installed")
+            ttk.Button(self.buttons, text="Install", command=self.install_or_update).pack()
 
-    # ---------- Updates ----------
+    # ---------- Update logic ----------
 
     def check_updates(self):
         self.latest_release = fetch_latest_release()
         base = self.install_dir.get()
-        installed = detect_version(base)
+        installed = installed_game_version(base)
 
         if not self.latest_release:
             self.update_status.set("Unable to check for updates")
@@ -145,28 +151,33 @@ class Launcher(tk.Tk):
         if installed == latest:
             self.update_status.set("You are up to date")
         else:
-            self.update_status.set(f"Update available: {latest}")
+            self.update_status.set(f"Latest version: {latest}")
 
-    def download_update(self):
+    def install_or_update(self):
         if not self.latest_release:
+            messagebox.showerror("Error", "No release info available.")
             return
-        threading.Thread(target=self._download_worker, daemon=True).start()
+        threading.Thread(target=self._download_and_apply, daemon=True).start()
 
-    def _download_worker(self):
+    def _download_and_apply(self):
         base = self.install_dir.get()
         updates = os.path.join(base, UPDATE_DIR)
         os.makedirs(updates, exist_ok=True)
 
-        exe_asset = next(
-            a for a in self.latest_release["assets"]
-            if a["name"].endswith(".exe")
+        asset = next(
+            (a for a in self.latest_release["assets"] if a["name"] == GAME_EXE),
+            None
         )
 
-        url = exe_asset["browser_download_url"]
+        if not asset:
+            messagebox.showerror("Error", "LifeRPG.exe not found in release.")
+            return
+
+        url = asset["browser_download_url"]
         dest = os.path.join(updates, UPDATE_EXE)
 
         self.progress["value"] = 0
-        self.update_status.set("Downloading update…")
+        self.update_status.set("Downloading game…")
 
         with urllib.request.urlopen(url) as r, open(dest, "wb") as f:
             total = int(r.headers.get("Content-Length", 0))
@@ -180,12 +191,14 @@ class Launcher(tk.Tk):
                 if total:
                     self.progress["value"] = (read / total) * 100
 
-        self.update_status.set("Update downloaded — ready to apply")
-        self.refresh_state()
+        with open(os.path.join(base, "version.txt"), "w", encoding="utf-8") as f:
+            f.write(self.latest_release.get("tag_name", "unknown"))
 
-    # ---------- Apply ----------
+        self._apply_update()
 
-    def apply_update(self):
+    # ---------- Apply update ----------
+
+    def _apply_update(self):
         base = self.install_dir.get()
         updates = os.path.join(base, UPDATE_DIR)
 
@@ -210,13 +223,18 @@ start "" "{old_exe}"
 
     def launch(self):
         base = self.install_dir.get()
-        exe = os.path.join(base, GAME_EXE)
+        game = os.path.join(base, GAME_EXE)
+        launcher = os.path.join(base, LAUNCHER_EXE)
 
-        if not os.path.exists(exe):
-            messagebox.showerror("Launch Error", "LifeRPG.exe not found.")
+        if not os.path.exists(game):
+            messagebox.showerror("Launch Error", "Game not installed.")
             return
 
-        subprocess.Popen([exe], cwd=base)
+        if os.path.abspath(game) == os.path.abspath(launcher):
+            messagebox.showerror("Critical Error", "Launcher attempted to launch itself.")
+            return
+
+        subprocess.Popen([game], cwd=base)
 
 
 if __name__ == "__main__":
