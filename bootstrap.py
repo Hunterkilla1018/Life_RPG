@@ -11,19 +11,25 @@ import urllib.request
 # ============================================================
 
 APP_NAME = "Life RPG"
-LAUNCHER_VERSION = "1.4.3"
+LAUNCHER_VERSION = "1.4.5"
 
 GITHUB_OWNER = "Hunterkilla1018"
 GITHUB_REPO = "Life_RPG"
 
 GAME_EXE = "LifeRPG.exe"
 
-UPDATE_DIR = ".updates"
-UPDATE_EXE = "LifeRPG_update.exe"
-SWAP_SCRIPT = "apply_update.bat"
+# ============================================================
+# Paths (CORRECTLY SEPARATED)
+# ============================================================
 
-CONFIG_DIR = os.path.join(os.environ.get("APPDATA", os.getcwd()), "LifeRPG")
-CONFIG_FILE = os.path.join(CONFIG_DIR, "launcher.json")
+APPDATA_BASE = os.path.join(os.environ["APPDATA"], "LifeRPG")
+CONFIG_FILE = os.path.join(APPDATA_BASE, "launcher.json")
+
+RUNTIME_DIR = os.path.join(APPDATA_BASE, "runtime")
+UPDATE_EXE = os.path.join(RUNTIME_DIR, "LifeRPG_update.exe")
+SWAP_SCRIPT = os.path.join(RUNTIME_DIR, "apply_update.bat")
+
+os.makedirs(RUNTIME_DIR, exist_ok=True)
 
 # ============================================================
 # Helpers
@@ -34,12 +40,13 @@ def load_config():
         return {
             "install_dir": "",
             "close_on_launch": True,
+            "minimize_on_launch": False,
             "update_interval_min": 1
         }
     return json.load(open(CONFIG_FILE, "r", encoding="utf-8"))
 
 def save_config(cfg):
-    os.makedirs(CONFIG_DIR, exist_ok=True)
+    os.makedirs(APPDATA_BASE, exist_ok=True)
     json.dump(cfg, open(CONFIG_FILE, "w", encoding="utf-8"), indent=4)
 
 def fetch_latest_release():
@@ -56,32 +63,21 @@ class Launcher(tk.Tk):
         super().__init__()
 
         self.title(f"{APP_NAME} Launcher")
-        self.geometry("780x540")
+        self.geometry("820x580")
         self.resizable(False, False)
 
         self.config_data = load_config()
-        self.install_dir = tk.StringVar(value=self.config_data.get("install_dir", ""))
-        self.close_on_launch = tk.BooleanVar(value=self.config_data.get("close_on_launch", True))
 
-        self.interval_labels = {
-            "1 minute": 1,
-            "5 minutes": 5,
-            "15 minutes": 15,
-            "30 minutes": 30,
-            "60 minutes": 60
-        }
+        self.install_dir = tk.StringVar(value=self.config_data["install_dir"])
+        self.close_on_launch = tk.BooleanVar(value=self.config_data["close_on_launch"])
+        self.minimize_on_launch = tk.BooleanVar(value=self.config_data["minimize_on_launch"])
 
-        self.update_interval_label = tk.StringVar(
-            value=f"{self.config_data.get('update_interval_min', 1)} minute"
-            if self.config_data.get("update_interval_min", 1) == 1
-            else f"{self.config_data.get('update_interval_min', 1)} minutes"
-        )
+        self.update_interval = self.config_data["update_interval_min"]
 
         self.latest_release = None
-        self.update_ready = False
-        self.update_check_running = False
-        self.after_id = None
+        self.update_state = "idle"  # idle | checking | available | downloading | ready
         self.game_running = False
+        self.after_id = None
 
         self.build_ui()
         self.schedule_update_check()
@@ -101,17 +97,16 @@ class Launcher(tk.Tk):
         ttk.Button(top, text="⚙", command=self.open_settings)\
             .pack(side="right", padx=10)
 
-        ttk.Entry(self, textvariable=self.install_dir, width=95).pack(pady=5)
+        ttk.Entry(self, textvariable=self.install_dir, width=105).pack(pady=5)
         ttk.Button(self, text="Browse…", command=self.browse).pack()
 
         self.status = tk.StringVar(value="Idle")
         ttk.Label(self, textvariable=self.status).pack(pady=5)
 
-        self.progress = ttk.Progressbar(self, length=740)
-        self.progress.pack(pady=10)
-
         self.buttons = ttk.Frame(self)
-        self.buttons.pack(pady=10)
+        self.buttons.pack(pady=20)
+
+        ttk.Button(self, text="Check now", command=self.manual_check).pack()
 
         self.refresh_buttons()
 
@@ -130,34 +125,54 @@ class Launcher(tk.Tk):
     def open_settings(self):
         win = tk.Toplevel(self)
         win.title("Settings")
-        win.geometry("340x240")
+        win.geometry("360x260")
         win.resizable(False, False)
 
-        ttk.Checkbutton(
+        close_cb = ttk.Checkbutton(
             win,
             text="Close launcher when game launches",
             variable=self.close_on_launch,
             command=self.save_settings
-        ).pack(pady=10)
+        )
+        close_cb.pack(pady=10)
 
-        ttk.Label(win, text="Check for updates every:").pack(pady=(10, 0))
+        minimize_cb = ttk.Checkbutton(
+            win,
+            text="Minimize launcher when game launches",
+            variable=self.minimize_on_launch,
+            command=self.save_settings
+        )
+        minimize_cb.pack(pady=5)
+
+        if self.close_on_launch.get():
+            minimize_cb.state(["disabled"])
+
+        ttk.Label(win, text="Update check interval (minutes)").pack(pady=(15, 0))
 
         interval_box = ttk.Combobox(
             win,
-            values=list(self.interval_labels.keys()),
-            textvariable=self.update_interval_label,
+            values=[1, 5, 15, 30, 60],
             state="readonly",
-            width=15
+            width=10
         )
+        interval_box.set(self.update_interval)
         interval_box.pack(pady=5)
-        interval_box.bind("<<ComboboxSelected>>", lambda e: self.save_settings())
 
-    def save_settings(self):
-        label = self.update_interval_label.get()
-        self.config_data["close_on_launch"] = self.close_on_launch.get()
-        self.config_data["update_interval_min"] = self.interval_labels[label]
+        interval_box.bind(
+            "<<ComboboxSelected>>",
+            lambda e: self.update_interval_changed(interval_box.get())
+        )
+
+    def update_interval_changed(self, value):
+        self.update_interval = int(value)
+        self.config_data["update_interval_min"] = self.update_interval
         save_config(self.config_data)
         self.schedule_update_check()
+
+    def save_settings(self):
+        self.config_data["close_on_launch"] = self.close_on_launch.get()
+        self.config_data["minimize_on_launch"] = self.minimize_on_launch.get()
+        save_config(self.config_data)
 
     # --------------------------------------------------------
 
@@ -172,120 +187,97 @@ class Launcher(tk.Tk):
             ttk.Button(self.buttons, text="Install", command=self.install).pack()
             return
 
-        ttk.Button(self.buttons, text="Launch", command=self.launch)\
-            .pack(side="left", padx=5)
+        ttk.Button(self.buttons, text="Launch", command=self.launch).pack(side="left", padx=5)
+        ttk.Button(self.buttons, text="Repair", command=self.repair).pack(side="left", padx=5)
 
-        ttk.Button(self.buttons, text="Repair", command=self.repair)\
-            .pack(side="left", padx=5)
-
-        if self.update_ready:
-            ttk.Button(
-                self.buttons,
-                text="Apply Update",
-                command=self.apply_update_prompt
-            ).pack(side="left", padx=5)
+        if self.update_state == "ready":
+            ttk.Button(self.buttons, text="Apply Update", command=self.apply_update)\
+                .pack(side="left", padx=5)
 
     # --------------------------------------------------------
-    # Scheduled update logic (PAUSES WHILE GAME RUNS)
+    # Update logic (FIXED STATE HANDLING)
     # --------------------------------------------------------
 
     def schedule_update_check(self):
         if self.after_id:
             self.after_cancel(self.after_id)
 
-        interval_ms = self.config_data["update_interval_min"] * 60_000
-        self.after_id = self.after(interval_ms, self.run_update_check)
+        self.after_id = self.after(self.update_interval * 60_000, self.run_update_check)
 
     def run_update_check(self):
-        if self.game_running:
-            self.schedule_update_check()
-            return
-
-        if not self.update_check_running:
+        if not self.game_running:
             threading.Thread(target=self.check_for_updates, daemon=True).start()
-
         self.schedule_update_check()
 
+    def manual_check(self):
+        if not self.game_running:
+            threading.Thread(target=self.check_for_updates, daemon=True).start()
+
     def check_for_updates(self):
-        self.update_check_running = True
-        try:
-            self.status.set("Checking for updates…")
-            self.latest_release = fetch_latest_release()
+        self.update_state = "checking"
+        self.status.set("Checking for updates…")
 
-            if not self.update_ready:
-                threading.Thread(target=self.download_update, daemon=True).start()
+        self.latest_release = fetch_latest_release()
+        self.update_state = "available"
+        self.status.set("Update available — downloading")
 
-        finally:
-            self.update_check_running = False
-
-    # --------------------------------------------------------
+        threading.Thread(target=self.download_update, daemon=True).start()
 
     def download_update(self):
+        self.update_state = "downloading"
+        self.status.set("Downloading update…")
+
         asset = next(a for a in self.latest_release["assets"] if a["name"] == GAME_EXE)
         url = asset["browser_download_url"]
 
-        base = self.install_dir.get()
-        updates = os.path.join(base, UPDATE_DIR)
-        os.makedirs(updates, exist_ok=True)
-
-        dest = os.path.join(updates, UPDATE_EXE)
-
-        self.status.set("Downloading update…")
-
-        with urllib.request.urlopen(url) as r, open(dest, "wb") as f:
+        with urllib.request.urlopen(url) as r, open(UPDATE_EXE, "wb") as f:
             f.write(r.read())
 
-        self.update_ready = True
+        self.update_state = "ready"
         self.status.set("Update ready")
         self.refresh_buttons()
 
     # --------------------------------------------------------
 
-    def apply_update_prompt(self):
-        if messagebox.askyesno("Update Ready", "Apply update now?"):
-            self.apply_update()
-
     def apply_update(self):
         base = self.install_dir.get()
-        updates = os.path.join(base, UPDATE_DIR)
+        game = os.path.join(base, GAME_EXE)
 
-        script = os.path.join(updates, SWAP_SCRIPT)
-        with open(script, "w") as f:
+        with open(SWAP_SCRIPT, "w", encoding="utf-8") as f:
             f.write(f"""@echo off
 timeout /t 2 >nul
-move "{os.path.join(updates, UPDATE_EXE)}" "{os.path.join(base, GAME_EXE)}"
-start "" "{os.path.join(base, GAME_EXE)}"
+move "{UPDATE_EXE}" "{game}"
+start "" "{game}"
 """)
 
-        subprocess.Popen(["cmd", "/c", script])
-        if self.close_on_launch.get():
-            self.destroy()
+        subprocess.Popen(["cmd", "/c", SWAP_SCRIPT])
+        self.handle_launcher_exit()
 
     # --------------------------------------------------------
 
     def install(self):
-        self.download_update()
-        self.apply_update()
+        self.check_for_updates()
 
     def repair(self):
-        self.download_update()
+        self.check_for_updates()
 
     def launch(self):
         self.game_running = True
         proc = subprocess.Popen([os.path.join(self.install_dir.get(), GAME_EXE)])
+        self.handle_launcher_exit(proc)
 
+    def handle_launcher_exit(self, proc=None):
         if self.close_on_launch.get():
             self.destroy()
-        else:
-            threading.Thread(
-                target=self.wait_for_game_exit,
-                args=(proc,),
-                daemon=True
-            ).start()
+        elif self.minimize_on_launch.get():
+            self.iconify()
+            if proc:
+                threading.Thread(target=self.wait_for_game_exit, args=(proc,), daemon=True).start()
 
     def wait_for_game_exit(self, proc):
         proc.wait()
         self.game_running = False
+        self.deiconify()
         self.status.set("Game closed — updates resumed")
 
 # ============================================================
