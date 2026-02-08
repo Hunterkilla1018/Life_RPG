@@ -1,31 +1,28 @@
 import os
 import json
-import time
 import subprocess
 import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import urllib.request
-import urllib.error
 
 APP_NAME = "Life RPG"
-APP_VERSION = "1.3-alpha2"
+APP_VERSION = "1.3-alpha3"
 
 GITHUB_OWNER = "Hunterkilla1018"
 GITHUB_REPO = "Life_RPG"
 
-CONFIG_DIR = os.path.join(
-    os.environ.get("APPDATA", os.getcwd()),
-    "LifeRPG"
-)
+CONFIG_DIR = os.path.join(os.environ.get("APPDATA", os.getcwd()), "LifeRPG")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "launcher.json")
 
-SAVE_DIR_NAME = "life_rpg_save"
-UPDATE_DIR_NAME = ".updates"
-UPDATE_EXE_NAME = "LifeRPG_update.exe"
+UPDATE_DIR = ".updates"
+UPDATE_EXE = "LifeRPG_update.exe"
+GAME_EXE = "LifeRPG.exe"
+LAUNCHER_EXE = "LifeRPG_Launcher.exe"
+SWAP_SCRIPT = "apply_update.bat"
 
 
-# ---------- Helpers ----------
+# ---------------- Config ----------------
 
 def load_config():
     if not os.path.exists(CONFIG_FILE):
@@ -36,19 +33,17 @@ def load_config():
         return {}
 
 
-def save_config(data: dict):
+def save_config(data):
     os.makedirs(CONFIG_DIR, exist_ok=True)
     json.dump(data, open(CONFIG_FILE, "w", encoding="utf-8"), indent=4)
 
 
-def detect_install(path: str):
-    version_file = os.path.join(path, "version.txt")
-    if os.path.isdir(path) and os.path.exists(version_file):
-        try:
-            return True, open(version_file, "r", encoding="utf-8").read().strip()
-        except Exception:
-            return True, "unknown"
-    return False, None
+def detect_version(path):
+    try:
+        with open(os.path.join(path, "version.txt"), "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except Exception:
+        return None
 
 
 def fetch_latest_release():
@@ -60,34 +55,28 @@ def fetch_latest_release():
         return None
 
 
-# ---------- Launcher ----------
+# ---------------- Launcher ----------------
 
 class Launcher(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title(f"{APP_NAME} Launcher")
-        self.geometry("680x460")
+        self.geometry("720x500")
         self.resizable(False, False)
 
-        self.config_data = load_config()
-        self.install_dir = tk.StringVar(
-            value=self.config_data.get("install_dir", "")
-        )
-        self.status = tk.StringVar(value="Choose an install directory")
+        self.config = load_config()
+        self.install_dir = tk.StringVar(value=self.config.get("install_dir", ""))
+        self.status = tk.StringVar(value="Choose install directory")
         self.update_status = tk.StringVar(value="Checking for updates…")
 
-        ttk.Label(
-            self,
-            text=f"{APP_NAME} v{APP_VERSION}",
-            font=("Segoe UI", 14)
-        ).pack(pady=10)
+        ttk.Label(self, text=f"{APP_NAME} {APP_VERSION}", font=("Segoe UI", 14)).pack(pady=10)
 
-        ttk.Entry(self, textvariable=self.install_dir, width=80).pack(padx=20)
+        ttk.Entry(self, textvariable=self.install_dir, width=90).pack()
         ttk.Button(self, text="Browse…", command=self.browse).pack(pady=5)
 
         ttk.Label(self, textvariable=self.update_status).pack(pady=5)
 
-        self.progress = ttk.Progressbar(self, length=620)
+        self.progress = ttk.Progressbar(self, length=680)
         self.progress.pack(pady=10)
 
         ttk.Label(self, textvariable=self.status).pack(pady=5)
@@ -98,11 +87,11 @@ class Launcher(tk.Tk):
         ttk.Button(self, text="Save Directory", command=self.save_directory).pack()
 
         self.latest_release = None
+        self.after(100, self.check_updates)
 
         self.refresh_state()
-        self.check_updates_async()
 
-    # ---------- UI helpers ----------
+    # ---------- UI ----------
 
     def browse(self):
         path = filedialog.askdirectory(title="Choose install directory")
@@ -113,121 +102,121 @@ class Launcher(tk.Tk):
     def save_directory(self):
         path = self.install_dir.get()
         if not path:
-            messagebox.showerror("Error", "Choose a directory first.")
             return
-
-        self.config_data["install_dir"] = path
-        save_config(self.config_data)
+        self.config["install_dir"] = path
+        save_config(self.config)
         self.refresh_state()
 
     def refresh_state(self):
         for w in self.buttons.winfo_children():
             w.destroy()
 
-        path = self.install_dir.get()
-        installed, version = detect_install(path)
+        base = self.install_dir.get()
+        installed_version = detect_version(base)
 
-        if not path:
+        if not base:
             self.status.set("No install directory selected")
             return
 
-        if installed:
-            self.status.set(f"Installed version: {version}")
+        if installed_version:
+            self.status.set(f"Installed version: {installed_version}")
 
             ttk.Button(self.buttons, text="Launch", command=self.launch).pack(side="left", padx=5)
             ttk.Button(self.buttons, text="Download Update", command=self.download_update).pack(side="left", padx=5)
-            ttk.Button(self.buttons, text="Repair", command=self.repair).pack(side="left", padx=5)
+
+            if os.path.exists(os.path.join(base, UPDATE_DIR, UPDATE_EXE)):
+                ttk.Button(self.buttons, text="Apply Update", command=self.apply_update).pack(side="left", padx=5)
         else:
             self.status.set("No install detected")
-            ttk.Button(self.buttons, text="Install", command=self.install).pack()
 
-    # ---------- Update logic ----------
-
-    def check_updates_async(self):
-        self.after(100, self.check_updates)
+    # ---------- Updates ----------
 
     def check_updates(self):
         self.latest_release = fetch_latest_release()
+        base = self.install_dir.get()
+        installed = detect_version(base)
+
         if not self.latest_release:
             self.update_status.set("Unable to check for updates")
             return
 
-        tag = self.latest_release.get("tag_name", "unknown")
-        self.update_status.set(f"Latest version available: {tag}")
+        latest = self.latest_release.get("tag_name")
+
+        if installed == latest:
+            self.update_status.set("You are up to date")
+        else:
+            self.update_status.set(f"Update available: {latest}")
 
     def download_update(self):
         if not self.latest_release:
-            messagebox.showerror("Error", "No update information available.")
             return
+        threading.Thread(target=self._download_worker, daemon=True).start()
 
-        threading.Thread(target=self._download_update_worker, daemon=True).start()
-
-    def _download_update_worker(self):
+    def _download_worker(self):
         base = self.install_dir.get()
-        updates_dir = os.path.join(base, UPDATE_DIR_NAME)
-        os.makedirs(updates_dir, exist_ok=True)
+        updates = os.path.join(base, UPDATE_DIR)
+        os.makedirs(updates, exist_ok=True)
 
-        assets = self.latest_release.get("assets", [])
-        exe_asset = next((a for a in assets if a["name"].lower().endswith(".exe")), None)
-
-        if not exe_asset:
-            self.update_status.set("No executable asset found in release")
-            return
+        exe_asset = next(
+            a for a in self.latest_release["assets"]
+            if a["name"].endswith(".exe")
+        )
 
         url = exe_asset["browser_download_url"]
-        dest = os.path.join(updates_dir, UPDATE_EXE_NAME)
+        dest = os.path.join(updates, UPDATE_EXE)
 
-        self.update_status.set("Downloading update…")
         self.progress["value"] = 0
+        self.update_status.set("Downloading update…")
 
-        try:
-            with urllib.request.urlopen(url) as r, open(dest, "wb") as f:
-                total = int(r.headers.get("Content-Length", 0))
-                downloaded = 0
+        with urllib.request.urlopen(url) as r, open(dest, "wb") as f:
+            total = int(r.headers.get("Content-Length", 0))
+            read = 0
+            while True:
+                chunk = r.read(8192)
+                if not chunk:
+                    break
+                f.write(chunk)
+                read += len(chunk)
+                if total:
+                    self.progress["value"] = (read / total) * 100
 
-                while True:
-                    chunk = r.read(8192)
-                    if not chunk:
-                        break
-                    f.write(chunk)
-                    downloaded += len(chunk)
+        self.update_status.set("Update downloaded — ready to apply")
+        self.refresh_state()
 
-                    if total:
-                        percent = (downloaded / total) * 100
-                        self.progress["value"] = percent
+    # ---------- Apply ----------
 
-            self.update_status.set("Update downloaded (not applied yet)")
-            messagebox.showinfo(
-                "Download complete",
-                "Update downloaded successfully.\n\n"
-                "It has NOT been applied yet."
-            )
+    def apply_update(self):
+        base = self.install_dir.get()
+        updates = os.path.join(base, UPDATE_DIR)
 
-        except Exception as e:
-            self.update_status.set("Download failed")
-            messagebox.showerror("Error", str(e))
+        new_exe = os.path.join(updates, UPDATE_EXE)
+        old_exe = os.path.join(base, GAME_EXE)
+        backup = old_exe + ".bak"
 
-    # ---------- Existing actions ----------
+        script = os.path.join(updates, SWAP_SCRIPT)
+        with open(script, "w", encoding="utf-8") as f:
+            f.write(f"""@echo off
+timeout /t 2 >nul
+if exist "{backup}" del "{backup}"
+if exist "{old_exe}" ren "{old_exe}" "{GAME_EXE}.bak"
+move "{new_exe}" "{old_exe}"
+start "" "{old_exe}"
+""")
 
-    def install(self):
-        messagebox.showinfo("Install", "Install logic unchanged in alpha2.")
+        subprocess.Popen(["cmd", "/c", script], cwd=updates)
+        self.destroy()
 
-    def repair(self):
-        messagebox.showinfo("Repair", "Repair logic unchanged in alpha2.")
+    # ---------- Launch ----------
 
     def launch(self):
         base = self.install_dir.get()
-        exe_path = os.path.join(base, "LifeRPG.exe")
+        exe = os.path.join(base, GAME_EXE)
 
-        if not os.path.exists(exe_path):
+        if not os.path.exists(exe):
             messagebox.showerror("Launch Error", "LifeRPG.exe not found.")
             return
 
-        subprocess.Popen(
-            [exe_path],
-            cwd=base,
-            creationflags=subprocess.DETACHED_PROCESS
-        )
+        subprocess.Popen([exe], cwd=base)
 
 
 if __name__ == "__main__":

@@ -22,15 +22,16 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pyinstaller requests
+          pip install pyinstaller
 
-      - name: Build EXE
-        run: pyinstaller --onefile --noconsole bootstrap.py
+      - name: Build Launcher EXE
+        run: |
+          pyinstaller --onefile --noconsole --name LifeRPG_Launcher bootstrap.py
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/bootstrap.exe
+          files: dist/LifeRPG_Launcher.exe
           tag_name: ${{ github.ref_name }}
           name: Life RPG ${{ github.ref_name }}
         env:
