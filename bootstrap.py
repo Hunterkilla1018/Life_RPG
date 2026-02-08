@@ -11,7 +11,7 @@ import urllib.request
 # ============================================================
 
 APP_NAME = "Life RPG"
-LAUNCHER_VERSION = "1.3.1"
+LAUNCHER_VERSION = "1.3.2"
 
 GITHUB_OWNER = "Hunterkilla1018"
 GITHUB_REPO = "Life_RPG"
