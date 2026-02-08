@@ -5,14 +5,14 @@ import urllib.request
 import subprocess
 import threading
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, filedialog
 
 # ============================================================
 # Identity
 # ============================================================
 
 APP_NAME = "Life RPG"
-LAUNCHER_VERSION = "1.4.6"
+LAUNCHER_VERSION = "1.4.7"
 
 GITHUB_OWNER = "Hunterkilla1018"
 GITHUB_REPO = "Life_RPG"
@@ -32,6 +32,27 @@ UPDATE_EXE = os.path.join(RUNTIME, "LifeRPG_update.exe")
 SWAP_SCRIPT = os.path.join(RUNTIME, "apply_update.bat")
 
 os.makedirs(RUNTIME, exist_ok=True)
+
+# ============================================================
+# Theme + Labels (RPG PREP)
+# ============================================================
+
+THEME = {
+    "bg": "#1e1e1e",
+    "fg": "#e6e6e6",
+    "accent": "#c9a24d",
+    "danger": "#c94d4d",
+    "success": "#4dc97a"
+}
+
+LABELS = {
+    "ready": "Ready",
+    "checking": "Checking for updates…",
+    "update_required": "Update required — launch blocked",
+    "integrity_failed": "Integrity check failed — repair required",
+    "no_internet": "No internet connection — launch blocked",
+    "not_installed": "Game not installed"
+}
 
 # ============================================================
 # Helpers
@@ -98,30 +119,117 @@ class Launcher(tk.Tk):
 
         self.latest_release = None
         self.manifest = None
-        self.integrity_ok = False
-        self.update_ready = False
-        self.game_running = False
 
         self.status = tk.StringVar(value="Starting…")
 
-        self.build_ui()
+        self._build_styles()
+        self._build_layout()
+
         threading.Thread(target=self.startup_check, daemon=True).start()
 
     # --------------------------------------------------------
+    # Styles (placeholders for future theming)
+    # --------------------------------------------------------
 
-    def build_ui(self):
-        ttk.Label(self, text=f"{APP_NAME} v{LAUNCHER_VERSION}",
-                  font=("Segoe UI", 14)).pack(pady=10)
+    def _build_styles(self):
+        style = ttk.Style()
+        style.configure("Primary.TButton")
+        style.configure("Secondary.TButton")
+        style.configure("Danger.TButton")
 
-        ttk.Entry(self, textvariable=self.install_dir, width=100).pack()
-        ttk.Button(self, text="Browse…", command=self.browse).pack(pady=5)
+    # --------------------------------------------------------
+    # Layout (SEMANTIC REGIONS)
+    # --------------------------------------------------------
 
-        ttk.Label(self, textvariable=self.status).pack(pady=10)
+    def _build_layout(self):
+        self.header_frame = ttk.Frame(self)
+        self.header_frame.pack(fill="x", pady=10)
 
-        self.buttons = ttk.Frame(self)
-        self.buttons.pack(pady=20)
+        ttk.Label(
+            self.header_frame,
+            text=f"{APP_NAME} v{LAUNCHER_VERSION}",
+            font=("Segoe UI", 14)
+        ).pack()
 
-        ttk.Button(self, text="Check now", command=self.manual_check).pack()
+        self.status_frame = ttk.Frame(self)
+        self.status_frame.pack(fill="x", pady=10)
+
+        ttk.Label(self.status_frame, textvariable=self.status).pack()
+
+        self.primary_action_frame = ttk.Frame(self)
+        self.primary_action_frame.pack(pady=15)
+
+        self.secondary_action_frame = ttk.Frame(self)
+        self.secondary_action_frame.pack(pady=5)
+
+        self.footer_frame = ttk.Frame(self)
+        self.footer_frame.pack(side="bottom", pady=10)
+
+        ttk.Entry(self.footer_frame, textvariable=self.install_dir, width=100).pack()
+        ttk.Button(self.footer_frame, text="Browse…", command=self.browse).pack(pady=5)
+
+    # --------------------------------------------------------
+
+    def clear_actions(self):
+        for frame in (self.primary_action_frame, self.secondary_action_frame):
+            for w in frame.winfo_children():
+                w.destroy()
+
+    # --------------------------------------------------------
+    # Startup logic (unchanged behavior)
+    # --------------------------------------------------------
+
+    def startup_check(self):
+        self.clear_actions()
+
+        if not internet_available():
+            self.status.set(LABELS["no_internet"])
+            return
+
+        base = self.install_dir.get()
+        game = os.path.join(base, GAME_EXE)
+
+        if not base or not os.path.exists(game):
+            self.status.set(LABELS["not_installed"])
+            ttk.Button(
+                self.primary_action_frame,
+                text="Install",
+                style="Primary.TButton",
+                command=self.install
+            ).pack()
+            return
+
+        self.latest_release = fetch_latest_release()
+        latest_version = self.latest_release["tag_name"]
+
+        if self.cfg["installed_version"] != latest_version:
+            self.status.set(LABELS["update_required"])
+            ttk.Button(
+                self.primary_action_frame,
+                text="Download Update",
+                style="Primary.TButton",
+                command=self.download_update
+            ).pack()
+            return
+
+        self.download_manifest()
+        if not self.verify_integrity(game):
+            self.status.set(LABELS["integrity_failed"])
+            ttk.Button(
+                self.primary_action_frame,
+                text="Repair",
+                style="Danger.TButton",
+                command=self.repair
+            ).pack()
+            return
+
+        self.status.set(LABELS["ready"])
+        ttk.Button(
+            self.primary_action_frame,
+            text="Launch",
+            style="Primary.TButton",
+            command=self.launch
+        ).pack()
 
     # --------------------------------------------------------
 
@@ -131,49 +239,7 @@ class Launcher(tk.Tk):
             self.install_dir.set(path)
             self.cfg["install_dir"] = path
             save_config(self.cfg)
-            self.startup_check()
-
-    # --------------------------------------------------------
-    # Startup logic (STRICT)
-    # --------------------------------------------------------
-
-    def startup_check(self):
-        self.clear_buttons()
-
-        if not internet_available():
-            self.status.set("No internet connection — launch blocked")
-            return
-
-        base = self.install_dir.get()
-        game = os.path.join(base, GAME_EXE)
-
-        if not base or not os.path.exists(game):
-            self.status.set("Game not installed")
-            ttk.Button(self.buttons, text="Install", command=self.install).pack()
-            return
-
-        self.latest_release = fetch_latest_release()
-        latest_version = self.latest_release["tag_name"]
-
-        if self.cfg["installed_version"] != latest_version:
-            self.status.set("Update required — launch blocked")
-            ttk.Button(self.buttons, text="Download Update", command=self.download_update).pack()
-            return
-
-        self.download_manifest()
-        if not self.verify_integrity(game):
-            self.status.set("Integrity check failed — repair required")
-            ttk.Button(self.buttons, text="Repair", command=self.repair).pack()
-            return
-
-        self.status.set("Ready")
-        ttk.Button(self.buttons, text="Launch", command=self.launch).pack()
-
-    # --------------------------------------------------------
-
-    def clear_buttons(self):
-        for w in self.buttons.winfo_children():
-            w.destroy()
+            threading.Thread(target=self.startup_check, daemon=True).start()
 
     # --------------------------------------------------------
     # Manifest & Integrity
@@ -186,9 +252,7 @@ class Launcher(tk.Tk):
 
     def verify_integrity(self, game_path):
         expected = self.manifest["files"].get(GAME_EXE)
-        if not expected:
-            return False
-        return sha256(game_path) == expected
+        return expected and sha256(game_path) == expected
 
     # --------------------------------------------------------
     # Updates
@@ -198,14 +262,17 @@ class Launcher(tk.Tk):
         self.status.set("Downloading update…")
         asset = next(a for a in self.latest_release["assets"] if a["name"] == GAME_EXE)
         download(asset["browser_download_url"], UPDATE_EXE)
-        self.update_ready = True
-        self.status.set("Update ready — apply required")
-        self.clear_buttons()
-        ttk.Button(self.buttons, text="Apply Update", command=self.apply_update).pack()
+
+        self.clear_actions()
+        ttk.Button(
+            self.primary_action_frame,
+            text="Apply Update",
+            style="Primary.TButton",
+            command=self.apply_update
+        ).pack()
 
     def apply_update(self):
         game = os.path.join(self.install_dir.get(), GAME_EXE)
-
         with open(SWAP_SCRIPT, "w", encoding="utf-8") as f:
             f.write(f"""@echo off
 timeout /t 2 >nul
@@ -226,9 +293,6 @@ start "" "{game}"
         self.download_update()
 
     # --------------------------------------------------------
-
-    def manual_check(self):
-        threading.Thread(target=self.startup_check, daemon=True).start()
 
     def launch(self):
         subprocess.Popen([os.path.join(self.install_dir.get(), GAME_EXE)])
