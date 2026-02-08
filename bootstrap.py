@@ -6,13 +6,14 @@ import hashlib
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import urllib.request
+import time
 
 # ============================================================
 # Identity
 # ============================================================
 
 APP_NAME = "Life RPG"
-LAUNCHER_VERSION = "1.4"
+LAUNCHER_VERSION = "1.4.1"
 
 GITHUB_OWNER = "Hunterkilla1018"
 GITHUB_REPO = "Life_RPG"
@@ -23,34 +24,11 @@ LAUNCHER_EXE = "LifeRPG_Launcher.exe"
 UPDATE_DIR = ".updates"
 UPDATE_EXE = "LifeRPG_update.exe"
 SWAP_SCRIPT = "apply_update.bat"
-HASH_FILE = "hash.txt"
 
 CONFIG_DIR = os.path.join(os.environ.get("APPDATA", os.getcwd()), "LifeRPG")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "launcher.json")
 
-# ============================================================
-# Managed file: storage.py
-# ============================================================
-
-STORAGE_PY_CONTENT = """\
-import os
-import json
-
-SAVE_DIR = "life_rpg_save"
-PLAYER_FILE = os.path.join(SAVE_DIR, "player.json")
-
-os.makedirs(SAVE_DIR, exist_ok=True)
-
-def load_player():
-    if not os.path.exists(PLAYER_FILE):
-        return {"level": 1, "xp": 0}
-    with open(PLAYER_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-def save_player(player):
-    with open(PLAYER_FILE, "w", encoding="utf-8") as f:
-        json.dump(player, f, indent=4)
-"""
+CHECK_INTERVAL_MS = 60_000  # 1 minute
 
 # ============================================================
 # Helpers
@@ -97,10 +75,12 @@ class Launcher(tk.Tk):
         self.close_on_launch = tk.BooleanVar(value=self.config_data.get("close_on_launch", True))
 
         self.latest_release = None
+        self.last_checked_version = None
         self.update_ready = False
+        self.update_check_in_progress = False
 
         self.build_ui()
-        self.after(100, self.check_updates)
+        self.after(100, self.scheduled_update_check)
 
     # --------------------------------------------------------
 
@@ -108,13 +88,11 @@ class Launcher(tk.Tk):
         top = ttk.Frame(self)
         top.pack(fill="x")
 
-        ttk.Label(
-            top,
-            text=f"{APP_NAME} v{LAUNCHER_VERSION}",
-            font=("Segoe UI", 14)
-        ).pack(side="left", padx=10, pady=10)
+        ttk.Label(top, text=f"{APP_NAME} v{LAUNCHER_VERSION}", font=("Segoe UI", 14))\
+            .pack(side="left", padx=10, pady=10)
 
-        ttk.Button(top, text="⚙", command=self.open_settings).pack(side="right", padx=10)
+        ttk.Button(top, text="⚙", command=self.open_settings)\
+            .pack(side="right", padx=10)
 
         ttk.Entry(self, textvariable=self.install_dir, width=95).pack(pady=5)
         ttk.Button(self, text="Browse…", command=self.browse).pack()
@@ -172,37 +150,64 @@ class Launcher(tk.Tk):
             ttk.Button(self.buttons, text="Install", command=self.install).pack()
             return
 
-        ttk.Button(self.buttons, text="Launch", command=self.launch).pack(side="left", padx=5)
-        ttk.Button(self.buttons, text="Repair", command=self.repair).pack(side="left", padx=5)
+        ttk.Button(self.buttons, text="Launch", command=self.launch)\
+            .pack(side="left", padx=5)
+
+        ttk.Button(self.buttons, text="Repair", command=self.repair)\
+            .pack(side="left", padx=5)
 
         if self.update_ready:
-            ttk.Button(self.buttons, text="Apply Update", command=self.apply_update_prompt).pack(side="left", padx=5)
+            ttk.Button(
+                self.buttons,
+                text="Apply Update",
+                command=self.apply_update_prompt
+            ).pack(side="left", padx=5)
 
     # --------------------------------------------------------
+    # Scheduled update logic (POLISHED)
+    # --------------------------------------------------------
 
-    def check_updates(self):
-        self.latest_release = fetch_latest_release()
-        base = self.install_dir.get()
-        game = os.path.join(base, GAME_EXE)
+    def scheduled_update_check(self):
+        if not self.update_check_in_progress:
+            threading.Thread(target=self.check_for_updates, daemon=True).start()
 
-        if not os.path.exists(game):
-            return
+        self.after(CHECK_INTERVAL_MS, self.scheduled_update_check)
 
-        asset = next(a for a in self.latest_release["assets"] if a["name"] == GAME_EXE)
-        expected_hash = asset.get("label")
+    def check_for_updates(self):
+        self.update_check_in_progress = True
 
-        if expected_hash:
-            current = sha256(game)
-            if current != expected_hash:
-                self.status.set("Integrity check failed — repairing")
-                self.repair()
+        try:
+            release = fetch_latest_release()
+            latest_version = release.get("tag_name")
+
+            if self.last_checked_version == latest_version:
                 return
 
-        threading.Thread(target=self.download_update, daemon=True).start()
+            self.last_checked_version = latest_version
+            self.latest_release = release
+
+            base = self.install_dir.get()
+            game = os.path.join(base, GAME_EXE)
+
+            if not os.path.exists(game):
+                return
+
+            self.status.set(f"Checking updates… ({latest_version})")
+
+            threading.Thread(
+                target=self.download_update,
+                daemon=True
+            ).start()
+
+        finally:
+            self.update_check_in_progress = False
 
     # --------------------------------------------------------
 
     def download_update(self):
+        if self.update_ready:
+            return
+
         asset = next(a for a in self.latest_release["assets"] if a["name"] == GAME_EXE)
         url = asset["browser_download_url"]
 
@@ -211,11 +216,14 @@ class Launcher(tk.Tk):
         os.makedirs(updates, exist_ok=True)
 
         dest = os.path.join(updates, UPDATE_EXE)
+
+        self.status.set("Downloading update…")
+
         with urllib.request.urlopen(url) as r, open(dest, "wb") as f:
             f.write(r.read())
 
         self.update_ready = True
-        self.status.set("Update downloaded")
+        self.status.set("Update ready")
         self.refresh_buttons()
 
     # --------------------------------------------------------
