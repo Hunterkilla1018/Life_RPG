@@ -22,7 +22,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pyinstaller cryptography
+          pip install pyinstaller cryptography requests
 
       # --------------------------------------------------
       # Build Launcher (never self-updates)
@@ -31,10 +31,10 @@ jobs:
         run: pyinstaller --onefile --noconsole --name LifeRPG_Launcher bootstrap.py
 
       # --------------------------------------------------
-      # Build Game (CRYPTOGRAPHY FIXED PROPERLY)
+      # Build Game (bundle ALL runtime dependencies)
       # --------------------------------------------------
       - name: Build Game
-        run: pyinstaller --onefile --noconsole --name LifeRPG --collect-all cryptography main.py
+        run: pyinstaller --onefile --noconsole --name LifeRPG --collect-all cryptography --collect-all requests main.py
 
       # --------------------------------------------------
       # Create GitHub Release
