@@ -11,7 +11,7 @@ import urllib.request
 # ============================================================
 
 APP_NAME = "Life RPG"
-LAUNCHER_VERSION = "1.4.5"
+LAUNCHER_VERSION = "1.4.5-hotfix1"
 
 GITHUB_OWNER = "Hunterkilla1018"
 GITHUB_REPO = "Life_RPG"
@@ -36,23 +36,44 @@ os.makedirs(RUNTIME_DIR, exist_ok=True)
 # ============================================================
 
 def load_config():
+    default = {
+        "install_dir": "",
+        "close_on_launch": True,
+        "minimize_on_launch": False,
+        "update_interval_min": 1
+    }
+
     if not os.path.exists(CONFIG_FILE):
-        return {
-            "install_dir": "",
-            "close_on_launch": True,
-            "minimize_on_launch": False,
-            "update_interval_min": 1
-        }
-    return json.load(open(CONFIG_FILE, "r", encoding="utf-8"))
+        return default.copy()
+
+    try:
+        data = json.load(open(CONFIG_FILE, "r", encoding="utf-8"))
+    except Exception:
+        return default.copy()
+
+    # 🔧 MIGRATE MISSING KEYS SAFELY
+    changed = False
+    for k, v in default.items():
+        if k not in data:
+            data[k] = v
+            changed = True
+
+    if changed:
+        save_config(data)
+
+    return data
+
 
 def save_config(cfg):
     os.makedirs(APPDATA_BASE, exist_ok=True)
     json.dump(cfg, open(CONFIG_FILE, "w", encoding="utf-8"), indent=4)
 
+
 def fetch_latest_release():
     url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest"
     with urllib.request.urlopen(url, timeout=5) as r:
         return json.loads(r.read().decode())
+
 
 # ============================================================
 # Launcher
@@ -68,14 +89,14 @@ class Launcher(tk.Tk):
 
         self.config_data = load_config()
 
-        self.install_dir = tk.StringVar(value=self.config_data["install_dir"])
-        self.close_on_launch = tk.BooleanVar(value=self.config_data["close_on_launch"])
-        self.minimize_on_launch = tk.BooleanVar(value=self.config_data["minimize_on_launch"])
+        self.install_dir = tk.StringVar(value=self.config_data.get("install_dir", ""))
+        self.close_on_launch = tk.BooleanVar(value=self.config_data.get("close_on_launch", True))
+        self.minimize_on_launch = tk.BooleanVar(value=self.config_data.get("minimize_on_launch", False))
 
-        self.update_interval = self.config_data["update_interval_min"]
+        self.update_interval = self.config_data.get("update_interval_min", 1)
 
         self.latest_release = None
-        self.update_state = "idle"  # idle | checking | available | downloading | ready
+        self.update_state = "idle"
         self.game_running = False
         self.after_id = None
 
@@ -195,7 +216,7 @@ class Launcher(tk.Tk):
                 .pack(side="left", padx=5)
 
     # --------------------------------------------------------
-    # Update logic (FIXED STATE HANDLING)
+    # Update logic
     # --------------------------------------------------------
 
     def schedule_update_check(self):
