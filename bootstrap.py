@@ -2,6 +2,7 @@ import os
 import json
 import subprocess
 import threading
+import hashlib
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import urllib.request
@@ -11,7 +12,7 @@ import urllib.request
 # ============================================================
 
 APP_NAME = "Life RPG"
-LAUNCHER_VERSION = "1.3.3"
+LAUNCHER_VERSION = "1.4"
 
 GITHUB_OWNER = "Hunterkilla1018"
 GITHUB_REPO = "Life_RPG"
@@ -22,10 +23,10 @@ LAUNCHER_EXE = "LifeRPG_Launcher.exe"
 UPDATE_DIR = ".updates"
 UPDATE_EXE = "LifeRPG_update.exe"
 SWAP_SCRIPT = "apply_update.bat"
+HASH_FILE = "hash.txt"
 
 CONFIG_DIR = os.path.join(os.environ.get("APPDATA", os.getcwd()), "LifeRPG")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "launcher.json")
-
 
 # ============================================================
 # Managed file: storage.py
@@ -35,21 +36,10 @@ STORAGE_PY_CONTENT = """\
 import os
 import json
 
-try:
-    from cryptography.fernet import Fernet
-except ImportError as e:
-    raise RuntimeError(
-        "Cryptography dependency missing.\\n\\n"
-        "The game was not packaged correctly.\\n"
-        "Please reinstall or update Life RPG."
-    ) from e
-
-
 SAVE_DIR = "life_rpg_save"
 PLAYER_FILE = os.path.join(SAVE_DIR, "player.json")
 
 os.makedirs(SAVE_DIR, exist_ok=True)
-
 
 def load_player():
     if not os.path.exists(PLAYER_FILE):
@@ -57,52 +47,38 @@ def load_player():
     with open(PLAYER_FILE, "r", encoding="utf-8") as f:
         return json.load(f)
 
-
 def save_player(player):
     with open(PLAYER_FILE, "w", encoding="utf-8") as f:
         json.dump(player, f, indent=4)
 """
 
-
-def write_storage_py(install_dir: str):
-    with open(os.path.join(install_dir, "storage.py"), "w", encoding="utf-8") as f:
-        f.write(STORAGE_PY_CONTENT)
-
-
 # ============================================================
 # Helpers
 # ============================================================
 
+def sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
 def load_config():
     if not os.path.exists(CONFIG_FILE):
-        return {}
-    try:
-        return json.load(open(CONFIG_FILE, "r", encoding="utf-8"))
-    except Exception:
-        return {}
+        return {
+            "install_dir": "",
+            "close_on_launch": True
+        }
+    return json.load(open(CONFIG_FILE, "r", encoding="utf-8"))
 
-
-def save_config(data):
+def save_config(cfg):
     os.makedirs(CONFIG_DIR, exist_ok=True)
-    json.dump(data, open(CONFIG_FILE, "w", encoding="utf-8"), indent=4)
-
-
-def installed_game_version(path):
-    try:
-        with open(os.path.join(path, "version.txt"), "r", encoding="utf-8") as f:
-            return f.read().strip()
-    except Exception:
-        return None
-
+    json.dump(cfg, open(CONFIG_FILE, "w", encoding="utf-8"), indent=4)
 
 def fetch_latest_release():
     url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest"
-    try:
-        with urllib.request.urlopen(url, timeout=5) as r:
-            return json.loads(r.read().decode("utf-8"))
-    except Exception:
-        return None
-
+    with urllib.request.urlopen(url, timeout=5) as r:
+        return json.loads(r.read().decode())
 
 # ============================================================
 # Launcher
@@ -113,222 +89,170 @@ class Launcher(tk.Tk):
         super().__init__()
 
         self.title(f"{APP_NAME} Launcher")
-        self.geometry("760x520")
+        self.geometry("780x520")
         self.resizable(False, False)
 
-        self.config = load_config()
-        self.install_dir = tk.StringVar(value=self.config.get("install_dir", ""))
-        self.status = tk.StringVar(value="Choose install directory")
-        self.update_status = tk.StringVar(value="Checking for updates…")
+        self.config_data = load_config()
+        self.install_dir = tk.StringVar(value=self.config_data.get("install_dir", ""))
+        self.close_on_launch = tk.BooleanVar(value=self.config_data.get("close_on_launch", True))
 
         self.latest_release = None
-        self.update_available = False
+        self.update_ready = False
+
+        self.build_ui()
+        self.after(100, self.check_updates)
+
+    # --------------------------------------------------------
+
+    def build_ui(self):
+        top = ttk.Frame(self)
+        top.pack(fill="x")
 
         ttk.Label(
-            self,
-            text=f"{APP_NAME} Launcher v{LAUNCHER_VERSION}",
+            top,
+            text=f"{APP_NAME} v{LAUNCHER_VERSION}",
             font=("Segoe UI", 14)
-        ).pack(pady=10)
+        ).pack(side="left", padx=10, pady=10)
 
-        ttk.Entry(self, textvariable=self.install_dir, width=95).pack()
-        ttk.Button(self, text="Browse…", command=self.browse).pack(pady=5)
+        ttk.Button(top, text="⚙", command=self.open_settings).pack(side="right", padx=10)
 
-        ttk.Label(self, textvariable=self.update_status).pack(pady=5)
+        ttk.Entry(self, textvariable=self.install_dir, width=95).pack(pady=5)
+        ttk.Button(self, text="Browse…", command=self.browse).pack()
 
-        self.progress = ttk.Progressbar(self, length=720)
-        self.progress.pack(pady=10)
-
+        self.status = tk.StringVar(value="Idle")
         ttk.Label(self, textvariable=self.status).pack(pady=5)
+
+        self.progress = ttk.Progressbar(self, length=740)
+        self.progress.pack(pady=10)
 
         self.buttons = ttk.Frame(self)
         self.buttons.pack(pady=10)
 
-        ttk.Button(self, text="Save Directory", command=self.save_directory).pack()
-
-        self.after(100, self.check_updates)
-        self.refresh_state()
+        self.refresh_buttons()
 
     # --------------------------------------------------------
 
     def browse(self):
-        path = filedialog.askdirectory(title="Choose install directory")
+        path = filedialog.askdirectory()
         if path:
             self.install_dir.set(path)
-            self.refresh_state()
-
-    def save_directory(self):
-        path = self.install_dir.get()
-        if not path:
-            return
-        self.config["install_dir"] = path
-        save_config(self.config)
-        self.refresh_state()
+            self.config_data["install_dir"] = path
+            save_config(self.config_data)
+            self.refresh_buttons()
 
     # --------------------------------------------------------
 
-    def refresh_state(self):
+    def open_settings(self):
+        win = tk.Toplevel(self)
+        win.title("Settings")
+        win.geometry("300x150")
+        win.resizable(False, False)
+
+        ttk.Checkbutton(
+            win,
+            text="Close launcher when game launches",
+            variable=self.close_on_launch,
+            command=self.save_settings
+        ).pack(pady=20)
+
+    def save_settings(self):
+        self.config_data["close_on_launch"] = self.close_on_launch.get()
+        save_config(self.config_data)
+
+    # --------------------------------------------------------
+
+    def refresh_buttons(self):
         for w in self.buttons.winfo_children():
             w.destroy()
 
         base = self.install_dir.get()
-        version = installed_game_version(base)
+        game = os.path.join(base, GAME_EXE)
 
-        if not base:
-            self.status.set("No install directory selected")
+        if not base or not os.path.exists(game):
+            ttk.Button(self.buttons, text="Install", command=self.install).pack()
             return
 
-        if version:
-            self.status.set(f"Installed game version: {version}")
+        ttk.Button(self.buttons, text="Launch", command=self.launch).pack(side="left", padx=5)
+        ttk.Button(self.buttons, text="Repair", command=self.repair).pack(side="left", padx=5)
 
-            ttk.Button(self.buttons, text="Launch Game", command=self.launch)\
-                .pack(side="left", padx=5)
-
-            if self.update_available:
-                ttk.Button(
-                    self.buttons,
-                    text="Update",
-                    command=lambda: self.install_or_update("update")
-                ).pack(side="left", padx=5)
-
-            ttk.Button(
-                self.buttons,
-                text="Repair",
-                command=lambda: self.install_or_update("repair")
-            ).pack(side="left", padx=5)
-
-        else:
-            self.status.set("Game not installed")
-            ttk.Button(
-                self.buttons,
-                text="Install",
-                command=lambda: self.install_or_update("install")
-            ).pack()
+        if self.update_ready:
+            ttk.Button(self.buttons, text="Apply Update", command=self.apply_update_prompt).pack(side="left", padx=5)
 
     # --------------------------------------------------------
 
     def check_updates(self):
         self.latest_release = fetch_latest_release()
         base = self.install_dir.get()
-        installed = installed_game_version(base)
+        game = os.path.join(base, GAME_EXE)
 
-        if not self.latest_release:
-            self.update_status.set("Unable to check for updates")
+        if not os.path.exists(game):
             return
 
-        latest = self.latest_release.get("tag_name")
+        asset = next(a for a in self.latest_release["assets"] if a["name"] == GAME_EXE)
+        expected_hash = asset.get("label")
 
-        if installed == latest:
-            self.update_available = False
-            self.update_status.set("You are up to date")
-        else:
-            self.update_available = True
-            self.update_status.set(f"Update available: {latest}")
+        if expected_hash:
+            current = sha256(game)
+            if current != expected_hash:
+                self.status.set("Integrity check failed — repairing")
+                self.repair()
+                return
 
-        self.refresh_state()
+        threading.Thread(target=self.download_update, daemon=True).start()
 
     # --------------------------------------------------------
 
-    def install_or_update(self, mode: str):
-        if not self.latest_release:
-            messagebox.showerror("Error", "No release information available.")
-            return
+    def download_update(self):
+        asset = next(a for a in self.latest_release["assets"] if a["name"] == GAME_EXE)
+        url = asset["browser_download_url"]
 
-        threading.Thread(
-            target=self._download_and_apply,
-            args=(mode,),
-            daemon=True
-        ).start()
-
-    def _download_and_apply(self, mode: str):
         base = self.install_dir.get()
         updates = os.path.join(base, UPDATE_DIR)
         os.makedirs(updates, exist_ok=True)
 
-        asset = next(
-            (a for a in self.latest_release["assets"] if a["name"] == GAME_EXE),
-            None
-        )
-
-        if not asset:
-            messagebox.showerror("Error", "LifeRPG.exe not found in release.")
-            return
-
-        url = asset["browser_download_url"]
         dest = os.path.join(updates, UPDATE_EXE)
-
-        self.progress["value"] = 0
-        self.update_status.set(f"{mode.capitalize()}ing game…")
-
         with urllib.request.urlopen(url) as r, open(dest, "wb") as f:
-            total = int(r.headers.get("Content-Length", 0))
-            read = 0
-            while True:
-                chunk = r.read(8192)
-                if not chunk:
-                    break
-                f.write(chunk)
-                read += len(chunk)
-                if total:
-                    self.progress["value"] = (read / total) * 100
+            f.write(r.read())
 
-        write_storage_py(base)
-
-        with open(os.path.join(base, "version.txt"), "w", encoding="utf-8") as f:
-            f.write(self.latest_release.get("tag_name", "unknown"))
-
-        self._apply_update(mode)
+        self.update_ready = True
+        self.status.set("Update downloaded")
+        self.refresh_buttons()
 
     # --------------------------------------------------------
 
-    def _apply_update(self, mode: str):
+    def apply_update_prompt(self):
+        if messagebox.askyesno("Update Ready", "Apply update now?"):
+            self.apply_update()
+
+    def apply_update(self):
         base = self.install_dir.get()
         updates = os.path.join(base, UPDATE_DIR)
 
-        new_exe = os.path.join(updates, UPDATE_EXE)
-        old_exe = os.path.join(base, GAME_EXE)
-        backup = old_exe + ".bak"
-
-        launch_line = f'start "" "{old_exe}"' if mode != "repair" else ""
-
         script = os.path.join(updates, SWAP_SCRIPT)
-        with open(script, "w", encoding="utf-8") as f:
-            f.write(
-                "@echo off\n"
-                "timeout /t 2 >nul\n"
-                f'if exist "{backup}" del "{backup}"\n'
-                f'if exist "{old_exe}" ren "{old_exe}" "{GAME_EXE}.bak"\n'
-                f'move "{new_exe}" "{old_exe}"\n'
-                f"{launch_line}\n"
-            )
+        with open(script, "w") as f:
+            f.write(f"""@echo off
+timeout /t 2 >nul
+move "{os.path.join(updates, UPDATE_EXE)}" "{os.path.join(base, GAME_EXE)}"
+start "" "{os.path.join(base, GAME_EXE)}"
+""")
 
-        subprocess.Popen(["cmd", "/c", script], cwd=updates)
-
-        if mode == "repair":
-            self.progress["value"] = 0
-            self.update_status.set("Repair complete")
-            self.check_updates()
-        else:
+        subprocess.Popen(["cmd", "/c", script])
+        if self.close_on_launch.get():
             self.destroy()
 
     # --------------------------------------------------------
 
+    def install(self):
+        self.download_update()
+        self.apply_update()
+
+    def repair(self):
+        self.download_update()
+
     def launch(self):
-        base = self.install_dir.get()
-        game = os.path.join(base, GAME_EXE)
-        launcher = os.path.join(base, LAUNCHER_EXE)
-
-        if not os.path.exists(game):
-            messagebox.showerror("Launch Error", "Game not installed.")
-            return
-
-        if os.path.abspath(game) == os.path.abspath(launcher):
-            messagebox.showerror(
-                "Critical Error",
-                "Launcher attempted to launch itself."
-            )
-            return
-
-        subprocess.Popen([game], cwd=base)
+        subprocess.Popen([os.path.join(self.install_dir.get(), GAME_EXE)])
+        if self.close_on_launch.get():
+            self.destroy()
 
 
 # ============================================================
