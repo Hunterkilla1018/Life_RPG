@@ -11,7 +11,7 @@ import urllib.request
 # ============================================================
 
 APP_NAME = "Life RPG"
-LAUNCHER_VERSION = "1.3.2"
+LAUNCHER_VERSION = "1.3.3"
 
 GITHUB_OWNER = "Hunterkilla1018"
 GITHUB_REPO = "Life_RPG"
@@ -65,8 +65,7 @@ def save_player(player):
 
 
 def write_storage_py(install_dir: str):
-    path = os.path.join(install_dir, "storage.py")
-    with open(path, "w", encoding="utf-8") as f:
+    with open(os.path.join(install_dir, "storage.py"), "w", encoding="utf-8") as f:
         f.write(STORAGE_PY_CONTENT)
 
 
@@ -122,6 +121,9 @@ class Launcher(tk.Tk):
         self.status = tk.StringVar(value="Choose install directory")
         self.update_status = tk.StringVar(value="Checking for updates…")
 
+        self.latest_release = None
+        self.update_available = False
+
         ttk.Label(
             self,
             text=f"{APP_NAME} Launcher v{LAUNCHER_VERSION}",
@@ -142,8 +144,6 @@ class Launcher(tk.Tk):
         self.buttons.pack(pady=10)
 
         ttk.Button(self, text="Save Directory", command=self.save_directory).pack()
-
-        self.latest_release = None
 
         self.after(100, self.check_updates)
         self.refresh_state()
@@ -179,12 +179,33 @@ class Launcher(tk.Tk):
 
         if version:
             self.status.set(f"Installed game version: {version}")
-            ttk.Button(self.buttons, text="Launch Game", command=self.launch).pack(side="left", padx=5)
-            ttk.Button(self.buttons, text="Update", command=self.install_or_update).pack(side="left", padx=5)
-            ttk.Button(self.buttons, text="Repair", command=self.install_or_update).pack(side="left", padx=5)
+
+            ttk.Button(
+                self.buttons,
+                text="Launch Game",
+                command=self.launch
+            ).pack(side="left", padx=5)
+
+            if self.update_available:
+                ttk.Button(
+                    self.buttons,
+                    text="Update",
+                    command=lambda: self.install_or_update("update")
+                ).pack(side="left", padx=5)
+
+            ttk.Button(
+                self.buttons,
+                text="Repair",
+                command=lambda: self.install_or_update("repair")
+            ).pack(side="left", padx=5)
+
         else:
             self.status.set("Game not installed")
-            ttk.Button(self.buttons, text="Install", command=self.install_or_update).pack()
+            ttk.Button(
+                self.buttons,
+                text="Install",
+                command=lambda: self.install_or_update("install")
+            ).pack()
 
     # --------------------------------------------------------
 
@@ -200,19 +221,28 @@ class Launcher(tk.Tk):
         latest = self.latest_release.get("tag_name")
 
         if installed == latest:
+            self.update_available = False
             self.update_status.set("You are up to date")
         else:
-            self.update_status.set(f"Latest version available: {latest}")
+            self.update_available = True
+            self.update_status.set(f"Update available: {latest}")
+
+        self.refresh_state()
 
     # --------------------------------------------------------
 
-    def install_or_update(self):
+    def install_or_update(self, mode: str):
         if not self.latest_release:
             messagebox.showerror("Error", "No release information available.")
             return
-        threading.Thread(target=self._download_and_apply, daemon=True).start()
 
-    def _download_and_apply(self):
+        threading.Thread(
+            target=self._download_and_apply,
+            args=(mode,),
+            daemon=True
+        ).start()
+
+    def _download_and_apply(self, mode: str):
         base = self.install_dir.get()
         updates = os.path.join(base, UPDATE_DIR)
         os.makedirs(updates, exist_ok=True)
@@ -230,7 +260,7 @@ class Launcher(tk.Tk):
         dest = os.path.join(updates, UPDATE_EXE)
 
         self.progress["value"] = 0
-        self.update_status.set("Downloading game…")
+        self.update_status.set(f"{mode.capitalize()}ing game…")
 
         with urllib.request.urlopen(url) as r, open(dest, "wb") as f:
             total = int(r.headers.get("Content-Length", 0))
@@ -244,23 +274,24 @@ class Launcher(tk.Tk):
                 if total:
                     self.progress["value"] = (read / total) * 100
 
-        # Write managed files
         write_storage_py(base)
 
         with open(os.path.join(base, "version.txt"), "w", encoding="utf-8") as f:
             f.write(self.latest_release.get("tag_name", "unknown"))
 
-        self._apply_update()
+        self._apply_update(mode)
 
     # --------------------------------------------------------
 
-    def _apply_update(self):
+    def _apply_update(self, mode: str):
         base = self.install_dir.get()
         updates = os.path.join(base, UPDATE_DIR)
 
         new_exe = os.path.join(updates, UPDATE_EXE)
         old_exe = os.path.join(base, GAME_EXE)
         backup = old_exe + ".bak"
+
+        launch_game = (mode != "repair")
 
         script = os.path.join(updates, SWAP_SCRIPT)
         with open(script, "w", encoding="utf-8") as f:
@@ -269,11 +300,17 @@ timeout /t 2 >nul
 if exist "{backup}" del "{backup}"
 if exist "{old_exe}" ren "{old_exe}" "{GAME_EXE}.bak"
 move "{new_exe}" "{old_exe}"
-start "" "{old_exe}"
+{"start \"\" \"" + old_exe + "\"" if launch_game else ""}
 """)
 
         subprocess.Popen(["cmd", "/c", script], cwd=updates)
-        self.destroy()
+
+        if mode == "repair":
+            self.progress["value"] = 0
+            self.update_status.set("Repair complete")
+            self.check_updates()
+        else:
+            self.destroy()
 
     # --------------------------------------------------------
 
