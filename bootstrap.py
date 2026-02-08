@@ -2,7 +2,6 @@ import os
 import json
 import subprocess
 import threading
-import hashlib
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import urllib.request
@@ -12,13 +11,12 @@ import urllib.request
 # ============================================================
 
 APP_NAME = "Life RPG"
-LAUNCHER_VERSION = "1.4.2"
+LAUNCHER_VERSION = "1.4.3"
 
 GITHUB_OWNER = "Hunterkilla1018"
 GITHUB_REPO = "Life_RPG"
 
 GAME_EXE = "LifeRPG.exe"
-LAUNCHER_EXE = "LifeRPG_Launcher.exe"
 
 UPDATE_DIR = ".updates"
 UPDATE_EXE = "LifeRPG_update.exe"
@@ -64,12 +62,26 @@ class Launcher(tk.Tk):
         self.config_data = load_config()
         self.install_dir = tk.StringVar(value=self.config_data.get("install_dir", ""))
         self.close_on_launch = tk.BooleanVar(value=self.config_data.get("close_on_launch", True))
-        self.update_interval = tk.IntVar(value=self.config_data.get("update_interval_min", 1))
+
+        self.interval_labels = {
+            "1 minute": 1,
+            "5 minutes": 5,
+            "15 minutes": 15,
+            "30 minutes": 30,
+            "60 minutes": 60
+        }
+
+        self.update_interval_label = tk.StringVar(
+            value=f"{self.config_data.get('update_interval_min', 1)} minute"
+            if self.config_data.get("update_interval_min", 1) == 1
+            else f"{self.config_data.get('update_interval_min', 1)} minutes"
+        )
 
         self.latest_release = None
         self.update_ready = False
         self.update_check_running = False
         self.after_id = None
+        self.game_running = False
 
         self.build_ui()
         self.schedule_update_check()
@@ -118,7 +130,7 @@ class Launcher(tk.Tk):
     def open_settings(self):
         win = tk.Toplevel(self)
         win.title("Settings")
-        win.geometry("320x220")
+        win.geometry("340x240")
         win.resizable(False, False)
 
         ttk.Checkbutton(
@@ -132,17 +144,18 @@ class Launcher(tk.Tk):
 
         interval_box = ttk.Combobox(
             win,
-            values=[1, 5, 15, 30, 60],
-            textvariable=self.update_interval,
+            values=list(self.interval_labels.keys()),
+            textvariable=self.update_interval_label,
             state="readonly",
-            width=10
+            width=15
         )
         interval_box.pack(pady=5)
         interval_box.bind("<<ComboboxSelected>>", lambda e: self.save_settings())
 
     def save_settings(self):
+        label = self.update_interval_label.get()
         self.config_data["close_on_launch"] = self.close_on_launch.get()
-        self.config_data["update_interval_min"] = self.update_interval.get()
+        self.config_data["update_interval_min"] = self.interval_labels[label]
         save_config(self.config_data)
         self.schedule_update_check()
 
@@ -173,19 +186,24 @@ class Launcher(tk.Tk):
             ).pack(side="left", padx=5)
 
     # --------------------------------------------------------
-    # Scheduled update logic
+    # Scheduled update logic (PAUSES WHILE GAME RUNS)
     # --------------------------------------------------------
 
     def schedule_update_check(self):
         if self.after_id:
             self.after_cancel(self.after_id)
 
-        interval_ms = self.update_interval.get() * 60_000
+        interval_ms = self.config_data["update_interval_min"] * 60_000
         self.after_id = self.after(interval_ms, self.run_update_check)
 
     def run_update_check(self):
+        if self.game_running:
+            self.schedule_update_check()
+            return
+
         if not self.update_check_running:
             threading.Thread(target=self.check_for_updates, daemon=True).start()
+
         self.schedule_update_check()
 
     def check_for_updates(self):
@@ -193,11 +211,6 @@ class Launcher(tk.Tk):
         try:
             self.status.set("Checking for updates…")
             self.latest_release = fetch_latest_release()
-            base = self.install_dir.get()
-            game = os.path.join(base, GAME_EXE)
-
-            if not os.path.exists(game):
-                return
 
             if not self.update_ready:
                 threading.Thread(target=self.download_update, daemon=True).start()
@@ -258,10 +271,22 @@ start "" "{os.path.join(base, GAME_EXE)}"
         self.download_update()
 
     def launch(self):
-        subprocess.Popen([os.path.join(self.install_dir.get(), GAME_EXE)])
+        self.game_running = True
+        proc = subprocess.Popen([os.path.join(self.install_dir.get(), GAME_EXE)])
+
         if self.close_on_launch.get():
             self.destroy()
+        else:
+            threading.Thread(
+                target=self.wait_for_game_exit,
+                args=(proc,),
+                daemon=True
+            ).start()
 
+    def wait_for_game_exit(self, proc):
+        proc.wait()
+        self.game_running = False
+        self.status.set("Game closed — updates resumed")
 
 # ============================================================
 # Entry
