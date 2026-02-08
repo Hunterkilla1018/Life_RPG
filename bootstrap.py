@@ -15,11 +15,10 @@ import tempfile
 APP_NAME = "LifeRPG"
 APP_VERSION = "1.1.7"
 VERSION_FILE = "version.txt"
-
 GITHUB_REPO = "Hunterkilla1018/Life_RPG"
 
 # =====================================================
-# PATHS
+# PATHS (SOURCE OF TRUTH)
 # =====================================================
 APPDATA_DIR = os.path.join(os.getenv("APPDATA"), "LifeRPG")
 LAUNCHER_CONFIG = os.path.join(APPDATA_DIR, "launcher.json")
@@ -29,56 +28,33 @@ BASE_DIR = os.path.dirname(sys.executable)
 # FILES TO INSTALL
 # =====================================================
 FILES = {
-    "config.py": """APP_NAME = "Life RPG"
-SAVE_DIR = "life_rpg_save"
-""",
-    "storage.py": """import os, json
-from config import SAVE_DIR
-
-os.makedirs(SAVE_DIR, exist_ok=True)
-PLAYER_FILE = os.path.join(SAVE_DIR, "player.json")
-
-def load_player():
-    if not os.path.exists(PLAYER_FILE):
-        return {"level": 1, "xp": 0}
-    return json.load(open(PLAYER_FILE))
-
-def save_player(p):
-    json.dump(p, open(PLAYER_FILE, "w"), indent=4)
-""",
-    "app_gui.py": """import tkinter as tk
-from tkinter import ttk
-from storage import load_player
-
-class LifeRPGApp(tk.Tk):
-    def __init__(self):
-        super().__init__()
-        self.title("Life RPG")
-        self.geometry("500x300")
-        p = load_player()
-        ttk.Label(self, text="Life RPG", font=("Segoe UI", 14)).pack(pady=20)
-        ttk.Label(self, text=f"Level: {p['level']}  XP: {p['xp']}").pack()
-""",
-    "main.py": """from app_gui import LifeRPGApp
-LifeRPGApp().mainloop()
-""",
     VERSION_FILE: APP_VERSION
 }
 
 # =====================================================
-# HELPERS
+# INSTALL STATE (LOCKED LOGIC)
 # =====================================================
-def ensure_appdata():
-    os.makedirs(APPDATA_DIR, exist_ok=True)
-
 def is_installed():
     return os.path.exists(LAUNCHER_CONFIG)
+
+def ensure_appdata():
+    os.makedirs(APPDATA_DIR, exist_ok=True)
 
 def save_launcher_config(data):
     ensure_appdata()
     with open(LAUNCHER_CONFIG, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=4)
 
+def load_launcher_config():
+    try:
+        with open(LAUNCHER_CONFIG, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+# =====================================================
+# VERSION / UPDATE HELPERS
+# =====================================================
 def read_installed_version():
     try:
         with open(os.path.join(BASE_DIR, VERSION_FILE), "r") as f:
@@ -91,14 +67,16 @@ def get_latest_release():
         f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest",
         timeout=5
     ) as r:
-        data = json.loads(r.read().decode())
-        return data
+        return json.loads(r.read().decode())
 
 def is_newer(latest, current):
-    return tuple(map(int, latest.split("."))) > tuple(map(int, current.split(".")))
+    try:
+        return tuple(map(int, latest.split("."))) > tuple(map(int, current.split(".")))
+    except Exception:
+        return False
 
 # =====================================================
-# UPDATE FLOW
+# UPDATE FLOW (APP MODE ONLY)
 # =====================================================
 def perform_update(release):
     assets = release.get("assets", [])
@@ -124,7 +102,7 @@ def perform_update(release):
     sys.exit(0)
 
 # =====================================================
-# INSTALLER GUI (unchanged)
+# INSTALLER GUI (ONLY FOR FIRST RUN)
 # =====================================================
 class Installer(tk.Tk):
     def __init__(self):
@@ -133,11 +111,14 @@ class Installer(tk.Tk):
         self.geometry("560x340")
         self.install_dir = tk.StringVar()
 
-        ttk.Label(self, text=f"Life RPG Installer (v{APP_VERSION})",
-                  font=("Segoe UI", 14)).pack(pady=10)
+        ttk.Label(
+            self,
+            text=f"Life RPG Installer (v{APP_VERSION})",
+            font=("Segoe UI", 14)
+        ).pack(pady=10)
 
         frame = ttk.Frame(self)
-        frame.pack()
+        frame.pack(pady=10)
 
         ttk.Entry(frame, textvariable=self.install_dir, width=50).pack(side="left", padx=5)
         ttk.Button(frame, text="Browse", command=self.browse).pack(side="left")
@@ -152,21 +133,25 @@ class Installer(tk.Tk):
     def install(self):
         base = self.install_dir.get()
         if not base:
+            messagebox.showerror("Error", "Please choose a folder.")
             return
 
         os.makedirs(base, exist_ok=True)
         save_launcher_config({"install_path": base})
 
-        for name, content in FILES.items():
-            with open(os.path.join(base, name), "w", encoding="utf-8") as f:
-                f.write(content)
+        with open(os.path.join(base, VERSION_FILE), "w") as f:
+            f.write(APP_VERSION)
 
         self.destroy()
-        subprocess.Popen([sys.executable], cwd=base)
+        subprocess.Popen(
+            [sys.executable],
+            cwd=base,
+            creationflags=subprocess.DETACHED_PROCESS
+        )
         sys.exit(0)
 
 # =====================================================
-# APP MODE
+# APP MODE (SAFE UPDATE CHECK)
 # =====================================================
 def run_app():
     try:
@@ -191,7 +176,7 @@ def run_app():
     LifeRPGApp().mainloop()
 
 # =====================================================
-# ENTRY POINT
+# ENTRY POINT (FINAL, NON-REGRESSABLE)
 # =====================================================
 if __name__ == "__main__":
     if is_installed():
