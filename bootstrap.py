@@ -2,11 +2,17 @@ import os
 import json
 import time
 import subprocess
+import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
+import urllib.request
+import urllib.error
 
 APP_NAME = "Life RPG"
-APP_VERSION = "1.2"
+APP_VERSION = "1.3-alpha2"
+
+GITHUB_OWNER = "Hunterkilla1018"
+GITHUB_REPO = "Life_RPG"
 
 CONFIG_DIR = os.path.join(
     os.environ.get("APPDATA", os.getcwd()),
@@ -15,56 +21,11 @@ CONFIG_DIR = os.path.join(
 CONFIG_FILE = os.path.join(CONFIG_DIR, "launcher.json")
 
 SAVE_DIR_NAME = "life_rpg_save"
+UPDATE_DIR_NAME = ".updates"
+UPDATE_EXE_NAME = "LifeRPG_update.exe"
 
-APP_FILES = {
-    "main.py": """from app_gui import LifeRPGApp
-LifeRPGApp().mainloop()
-""",
 
-    "app_gui.py": """import tkinter as tk
-from tkinter import ttk
-from storage import load_player
-
-class LifeRPGApp(tk.Tk):
-    def __init__(self):
-        super().__init__()
-        self.title("Life RPG")
-        self.geometry("500x300")
-
-        player = load_player()
-
-        ttk.Label(self, text="Life RPG", font=("Segoe UI", 14)).pack(pady=20)
-        ttk.Label(
-            self,
-            text=f"Level: {player['level']}  XP: {player['xp']}"
-        ).pack()
-""",
-
-    "storage.py": """import os, json
-
-SAVE_DIR = "life_rpg_save"
-PLAYER_FILE = os.path.join(SAVE_DIR, "player.json")
-
-os.makedirs(SAVE_DIR, exist_ok=True)
-
-def load_player():
-    if not os.path.exists(PLAYER_FILE):
-        return {"level": 1, "xp": 0}
-    return json.load(open(PLAYER_FILE))
-
-def save_player(player):
-    json.dump(player, open(PLAYER_FILE, "w"), indent=4)
-""",
-
-    "game_logic.py": """def apply(player, tasks):
-    for _ in tasks:
-        player["xp"] += 10
-    return player
-""",
-
-    "version.txt": APP_VERSION + "\n",
-}
-
+# ---------- Helpers ----------
 
 def load_config():
     if not os.path.exists(CONFIG_FILE):
@@ -90,11 +51,22 @@ def detect_install(path: str):
     return False, None
 
 
+def fetch_latest_release():
+    url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest"
+    try:
+        with urllib.request.urlopen(url, timeout=5) as r:
+            return json.loads(r.read().decode("utf-8"))
+    except Exception:
+        return None
+
+
+# ---------- Launcher ----------
+
 class Launcher(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title(f"{APP_NAME} Launcher")
-        self.geometry("620x400")
+        self.geometry("680x460")
         self.resizable(False, False)
 
         self.config_data = load_config()
@@ -102,6 +74,7 @@ class Launcher(tk.Tk):
             value=self.config_data.get("install_dir", "")
         )
         self.status = tk.StringVar(value="Choose an install directory")
+        self.update_status = tk.StringVar(value="Checking for updates…")
 
         ttk.Label(
             self,
@@ -109,10 +82,12 @@ class Launcher(tk.Tk):
             font=("Segoe UI", 14)
         ).pack(pady=10)
 
-        ttk.Entry(self, textvariable=self.install_dir, width=75).pack(padx=20)
+        ttk.Entry(self, textvariable=self.install_dir, width=80).pack(padx=20)
         ttk.Button(self, text="Browse…", command=self.browse).pack(pady=5)
 
-        self.progress = ttk.Progressbar(self, length=560)
+        ttk.Label(self, textvariable=self.update_status).pack(pady=5)
+
+        self.progress = ttk.Progressbar(self, length=620)
         self.progress.pack(pady=10)
 
         ttk.Label(self, textvariable=self.status).pack(pady=5)
@@ -122,7 +97,12 @@ class Launcher(tk.Tk):
 
         ttk.Button(self, text="Save Directory", command=self.save_directory).pack()
 
+        self.latest_release = None
+
         self.refresh_state()
+        self.check_updates_async()
+
+    # ---------- UI helpers ----------
 
     def browse(self):
         path = filedialog.askdirectory(title="Choose install directory")
@@ -152,66 +132,95 @@ class Launcher(tk.Tk):
             return
 
         if installed:
-            self.status.set(f"Installed version detected: {version}")
+            self.status.set(f"Installed version: {version}")
 
             ttk.Button(self.buttons, text="Launch", command=self.launch).pack(side="left", padx=5)
-            ttk.Button(self.buttons, text="Update", command=self.update).pack(side="left", padx=5)
+            ttk.Button(self.buttons, text="Download Update", command=self.download_update).pack(side="left", padx=5)
             ttk.Button(self.buttons, text="Repair", command=self.repair).pack(side="left", padx=5)
         else:
             self.status.set("No install detected")
             ttk.Button(self.buttons, text="Install", command=self.install).pack()
 
-    # ---- Install / Update / Repair ----
+    # ---------- Update logic ----------
 
-    def install(self):
-        self.run_file_write("install")
+    def check_updates_async(self):
+        self.after(100, self.check_updates)
 
-    def update(self):
-        self.run_file_write("update")
-
-    def repair(self):
-        self.run_file_write("repair")
-
-    def run_file_write(self, mode: str):
-        base = self.install_dir.get()
-        if not base:
+    def check_updates(self):
+        self.latest_release = fetch_latest_release()
+        if not self.latest_release:
+            self.update_status.set("Unable to check for updates")
             return
 
-        os.makedirs(base, exist_ok=True)
-        os.makedirs(os.path.join(base, SAVE_DIR_NAME), exist_ok=True)
+        tag = self.latest_release.get("tag_name", "unknown")
+        self.update_status.set(f"Latest version available: {tag}")
 
-        self.progress["maximum"] = len(APP_FILES)
+    def download_update(self):
+        if not self.latest_release:
+            messagebox.showerror("Error", "No update information available.")
+            return
+
+        threading.Thread(target=self._download_update_worker, daemon=True).start()
+
+    def _download_update_worker(self):
+        base = self.install_dir.get()
+        updates_dir = os.path.join(base, UPDATE_DIR_NAME)
+        os.makedirs(updates_dir, exist_ok=True)
+
+        assets = self.latest_release.get("assets", [])
+        exe_asset = next((a for a in assets if a["name"].lower().endswith(".exe")), None)
+
+        if not exe_asset:
+            self.update_status.set("No executable asset found in release")
+            return
+
+        url = exe_asset["browser_download_url"]
+        dest = os.path.join(updates_dir, UPDATE_EXE_NAME)
+
+        self.update_status.set("Downloading update…")
         self.progress["value"] = 0
 
-        for i, (name, content) in enumerate(APP_FILES.items(), start=1):
-            self.status.set(f"{mode.capitalize()}ing {name}…")
-            self.update_idletasks()
+        try:
+            with urllib.request.urlopen(url) as r, open(dest, "wb") as f:
+                total = int(r.headers.get("Content-Length", 0))
+                downloaded = 0
 
-            with open(os.path.join(base, name), "w", encoding="utf-8") as f:
-                f.write(content)
+                while True:
+                    chunk = r.read(8192)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    downloaded += len(chunk)
 
-            time.sleep(0.15)
-            self.progress["value"] = i
+                    if total:
+                        percent = (downloaded / total) * 100
+                        self.progress["value"] = percent
 
-        self.status.set(f"{mode.capitalize()} complete")
-        messagebox.showinfo("Done", f"{mode.capitalize()} completed successfully.")
-        self.refresh_state()
+            self.update_status.set("Update downloaded (not applied yet)")
+            messagebox.showinfo(
+                "Download complete",
+                "Update downloaded successfully.\n\n"
+                "It has NOT been applied yet."
+            )
 
-    # ---- FIXED LAUNCH ----
+        except Exception as e:
+            self.update_status.set("Download failed")
+            messagebox.showerror("Error", str(e))
+
+    # ---------- Existing actions ----------
+
+    def install(self):
+        messagebox.showinfo("Install", "Install logic unchanged in alpha2.")
+
+    def repair(self):
+        messagebox.showinfo("Repair", "Repair logic unchanged in alpha2.")
 
     def launch(self):
         base = self.install_dir.get()
-        if not base:
-            return
-
         exe_path = os.path.join(base, "LifeRPG.exe")
 
         if not os.path.exists(exe_path):
-            messagebox.showerror(
-                "Launch Error",
-                "LifeRPG.exe was not found.\n\n"
-                "Please run Update or Repair."
-            )
+            messagebox.showerror("Launch Error", "LifeRPG.exe not found.")
             return
 
         subprocess.Popen(
