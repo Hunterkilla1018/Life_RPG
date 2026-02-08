@@ -31,10 +31,10 @@ jobs:
         run: pyinstaller --onefile --noconsole --name LifeRPG_Launcher bootstrap.py
 
       # --------------------------------------------------
-      # Build Game (PowerShell-safe, cryptography forced)
+      # Build Game (CRYPTOGRAPHY FIXED PROPERLY)
       # --------------------------------------------------
       - name: Build Game
-        run: pyinstaller --onefile --noconsole --name LifeRPG --hidden-import=cryptography --hidden-import=cryptography.fernet --hidden-import=cryptography.hazmat --hidden-import=cryptography.hazmat.backends --hidden-import=cryptography.hazmat.bindings --hidden-import=cryptography.hazmat.bindings.openssl main.py
+        run: pyinstaller --onefile --noconsole --name LifeRPG --collect-all cryptography main.py
 
       # --------------------------------------------------
       # Create GitHub Release
