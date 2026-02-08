@@ -180,11 +180,8 @@ class Launcher(tk.Tk):
         if version:
             self.status.set(f"Installed game version: {version}")
 
-            ttk.Button(
-                self.buttons,
-                text="Launch Game",
-                command=self.launch
-            ).pack(side="left", padx=5)
+            ttk.Button(self.buttons, text="Launch Game", command=self.launch)\
+                .pack(side="left", padx=5)
 
             if self.update_available:
                 ttk.Button(
@@ -291,17 +288,18 @@ class Launcher(tk.Tk):
         old_exe = os.path.join(base, GAME_EXE)
         backup = old_exe + ".bak"
 
-        launch_game = (mode != "repair")
+        launch_line = f'start "" "{old_exe}"' if mode != "repair" else ""
 
         script = os.path.join(updates, SWAP_SCRIPT)
         with open(script, "w", encoding="utf-8") as f:
-            f.write(f"""@echo off
-timeout /t 2 >nul
-if exist "{backup}" del "{backup}"
-if exist "{old_exe}" ren "{old_exe}" "{GAME_EXE}.bak"
-move "{new_exe}" "{old_exe}"
-{"start \"\" \"" + old_exe + "\"" if launch_game else ""}
-""")
+            f.write(
+                "@echo off\n"
+                "timeout /t 2 >nul\n"
+                f'if exist "{backup}" del "{backup}"\n'
+                f'if exist "{old_exe}" ren "{old_exe}" "{GAME_EXE}.bak"\n'
+                f'move "{new_exe}" "{old_exe}"\n'
+                f"{launch_line}\n"
+            )
 
         subprocess.Popen(["cmd", "/c", script], cwd=updates)
 
@@ -324,7 +322,10 @@ move "{new_exe}" "{old_exe}"
             return
 
         if os.path.abspath(game) == os.path.abspath(launcher):
-            messagebox.showerror("Critical Error", "Launcher attempted to launch itself.")
+            messagebox.showerror(
+                "Critical Error",
+                "Launcher attempted to launch itself."
+            )
             return
 
         subprocess.Popen([game], cwd=base)
