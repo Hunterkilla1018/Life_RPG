@@ -5,47 +5,55 @@ on:
     tags:
       - "v*"
 
-permissions:
-  contents: write
-
 jobs:
   build:
     runs-on: windows-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install pyinstaller cryptography requests
+          pip install pyinstaller
 
-      # --------------------------------------------------
-      # Build Launcher (never self-updates)
-      # --------------------------------------------------
-      - name: Build Launcher
-        run: pyinstaller --onefile --noconsole --name LifeRPG_Launcher bootstrap.py
+      - name: Build EXE
+        run: |
+          pyinstaller --onefile bootstrap.py --name LifeRPG
 
-      # --------------------------------------------------
-      # Build Game (bundle ALL runtime dependencies)
-      # --------------------------------------------------
-      - name: Build Game
-        run: pyinstaller --onefile --noconsole --name LifeRPG --collect-all cryptography --collect-all requests main.py
+      # -------------------------------
+      # 🔐 Generate manifest.json
+      # -------------------------------
+      - name: Generate manifest.json
+        shell: bash
+        run: |
+          cd dist
 
-      # --------------------------------------------------
-      # Create GitHub Release
-      # --------------------------------------------------
-      - name: Create GitHub Release
+          EXE_NAME="LifeRPG.exe"
+          HASH=$(sha256sum "$EXE_NAME" | awk '{print $1}')
+
+          cat > manifest.json <<EOF
+          {
+            "files": {
+              "$EXE_NAME": "$HASH"
+            }
+          }
+          EOF
+
+          echo "Manifest generated:"
+          cat manifest.json
+
+      # -------------------------------
+      # 🚀 Upload release assets
+      # -------------------------------
+      - name: Upload EXE and manifest to release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/LifeRPG_Launcher.exe
             dist/LifeRPG.exe
-          tag_name: ${{ github.ref_name }}
-          name: Life RPG ${{ github.ref_name }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            dist/manifest.json
