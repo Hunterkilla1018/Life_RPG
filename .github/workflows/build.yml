@@ -63,7 +63,8 @@ jobs:
             $manifest.files[$rel] = $hash
           }
 
-          $manifest | ConvertTo-Json -Depth 5 | Out-File manifest.json -Encoding utf8
+          $manifest | ConvertTo-Json -Depth 5 | Set-Content -Path manifest.json -Encoding utf8
+
 
           Write-Host "Generated manifest:"
           Get-Content manifest.json
