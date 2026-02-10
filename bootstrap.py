@@ -4,6 +4,7 @@ import hashlib
 import urllib.request
 import subprocess
 import threading
+import time
 import tkinter as tk
 from tkinter import ttk, filedialog
 
@@ -12,7 +13,7 @@ from tkinter import ttk, filedialog
 # ============================================================
 
 APP_NAME = "Life RPG"
-LAUNCHER_VERSION = "1.5.0-alpha1-hotfix4"
+LAUNCHER_VERSION = "1.5.0-alpha2"
 
 GITHUB_OWNER = "Hunterkilla1018"
 GITHUB_REPO = "Life_RPG"
@@ -37,7 +38,7 @@ os.makedirs(RUNTIME, exist_ok=True)
 # Helpers
 # ============================================================
 
-def normalize_version(v: str) -> str:
+def normalize_version(v):
     return v.lstrip("v").strip() if v else ""
 
 def sha256(path):
@@ -51,7 +52,7 @@ def internet_available():
     try:
         urllib.request.urlopen("https://api.github.com", timeout=5)
         return True
-    except Exception:
+    except:
         return False
 
 def load_config():
@@ -60,7 +61,6 @@ def load_config():
         "installed_version": "",
         "close_on_launch": True
     }
-
     if not os.path.exists(CONFIG_FILE):
         return defaults.copy()
 
@@ -105,14 +105,13 @@ class Launcher(tk.Tk):
         self.latest_release = None
         self.manifest = None
 
-        # System state
         self.sys_status = tk.StringVar(value="INITIALIZING")
         self.net_status = tk.StringVar(value="UNKNOWN")
         self.integrity_status = tk.StringVar(value="UNKNOWN")
         self.update_status = tk.StringVar(value="UNKNOWN")
 
         self._build_ui()
-        self.after(100, self.startup_check_async)
+        self.after(100, self.startup_async)
 
     # ========================================================
     # UI
@@ -138,141 +137,111 @@ class Launcher(tk.Tk):
             anchor="w"
         )
         self.status_label.pack(fill="x", padx=15, pady=(0, 10))
-        self._refresh_status_bar()
 
-        self.primary_action_frame = ttk.Frame(self)
-        self.primary_action_frame.pack(pady=40)
+        self.actions = ttk.Frame(self)
+        self.actions.pack(pady=40)
 
         footer = ttk.Frame(self)
         footer.pack(side="bottom", pady=10)
-
         ttk.Entry(footer, textvariable=self.install_dir, width=100).pack()
         ttk.Button(footer, text="Browse…", command=self.browse).pack(pady=5)
 
-    def _refresh_status_bar(self):
+        self._refresh_status()
+
+    def _refresh_status(self):
         self.status_label.config(
-            text=(
-                f"SYSTEM: {self.sys_status.get()}   |   "
-                f"NET: {self.net_status.get()}   |   "
-                f"INTEGRITY: {self.integrity_status.get()}   |   "
-                f"UPDATE: {self.update_status.get()}"
-            )
+            text=f"SYSTEM: {self.sys_status.get()} | NET: {self.net_status.get()} | "
+                 f"INTEGRITY: {self.integrity_status.get()} | UPDATE: {self.update_status.get()}"
         )
 
-    def clear_primary_actions(self):
-        for w in self.primary_action_frame.winfo_children():
+    def clear_actions(self):
+        for w in self.actions.winfo_children():
             w.destroy()
 
     # ========================================================
-    # Startup Logic
+    # Startup
     # ========================================================
 
-    def startup_check_async(self):
-        threading.Thread(target=self._startup_logic, daemon=True).start()
+    def startup_async(self):
+        threading.Thread(target=self.startup_logic, daemon=True).start()
 
-    def _startup_logic(self):
-        net_ok = internet_available()
-        self.net_status.set("OK" if net_ok else "OFFLINE")
+    def startup_logic(self):
+        self.net_status.set("OK" if internet_available() else "OFFLINE")
+        self._refresh_status()
 
-        if not net_ok:
-            self.after(0, lambda: self.apply_state("NO_INTERNET"))
+        if self.net_status.get() == "OFFLINE":
+            self.apply_state("NO_INTERNET")
             return
 
         self.latest_release = fetch_latest_release()
-        latest = normalize_version(self.latest_release.get("tag_name"))
-        installed = normalize_version(self.cfg.get("installed_version"))
+        latest = normalize_version(self.latest_release["tag_name"])
+        installed = normalize_version(self.cfg["installed_version"])
 
         base = self.install_dir.get()
         game = os.path.join(base, GAME_EXE)
 
         if not base or not os.path.exists(game):
-            self.after(0, lambda: self.apply_state("NOT_INSTALLED"))
+            self.apply_state("NOT_INSTALLED")
             return
 
         if not installed or installed != latest:
-            self.after(0, lambda: self.apply_state("UPDATE_REQUIRED"))
+            self.apply_state("UPDATE_REQUIRED")
             return
 
-        self._download_manifest_safe()
-
+        self.download_manifest()
         if not self.manifest:
-            self.after(0, lambda: self.apply_state("MANIFEST_MISSING"))
+            self.apply_state("MANIFEST_MISSING")
             return
 
         if not self.verify_integrity(game):
-            self.after(0, lambda: self.apply_state("INTEGRITY_FAILED"))
+            self.apply_state("INTEGRITY_FAILED")
             return
 
-        self.after(0, lambda: self.apply_state("READY"))
+        self.apply_state("READY")
 
     # ========================================================
-    # State Application
+    # States
     # ========================================================
 
     def apply_state(self, state):
-        self.clear_primary_actions()
+        self.clear_actions()
+        self.sys_status.set("READY" if state == "READY" else "BLOCKED")
 
-        if state == "NO_INTERNET":
-            self.sys_status.set("BLOCKED")
-            self.update_status.set("OFFLINE")
-            self.integrity_status.set("UNKNOWN")
+        states = {
+            "NO_INTERNET": ("OFFLINE", "UNKNOWN"),
+            "NOT_INSTALLED": ("INSTALL REQUIRED", "UNKNOWN"),
+            "UPDATE_REQUIRED": ("REQUIRED", "UNKNOWN"),
+            "MANIFEST_MISSING": ("MANIFEST MISSING", "UNKNOWN"),
+            "INTEGRITY_FAILED": ("REPAIR REQUIRED", "FAILED"),
+            "READY": ("NONE", "VERIFIED")
+        }
 
-        elif state == "NOT_INSTALLED":
-            self.sys_status.set("BLOCKED")
-            self.update_status.set("INSTALL REQUIRED")
-            self.integrity_status.set("UNKNOWN")
-            ttk.Button(self.primary_action_frame, text="INSTALL SYSTEM",
-                       command=self.install).pack()
+        self.update_status.set(states[state][0])
+        self.integrity_status.set(states[state][1])
 
-        elif state == "UPDATE_REQUIRED":
-            self.sys_status.set("BLOCKED")
-            self.update_status.set("REQUIRED")
-            self.integrity_status.set("UNKNOWN")
-            ttk.Button(self.primary_action_frame, text="DOWNLOAD UPDATE",
-                       command=self.download_update).pack()
+        if state == "READY":
+            ttk.Button(self.actions, text="LAUNCH SYSTEM", command=self.launch).pack()
+        else:
+            ttk.Button(self.actions, text="DOWNLOAD UPDATE", command=self.download_update).pack()
 
-        elif state == "MANIFEST_MISSING":
-            self.sys_status.set("BLOCKED")
-            self.update_status.set("MANIFEST MISSING")
-            self.integrity_status.set("UNKNOWN")
-            ttk.Button(self.primary_action_frame, text="DOWNLOAD UPDATE",
-                       command=self.download_update).pack()
-
-        elif state == "INTEGRITY_FAILED":
-            self.sys_status.set("BLOCKED")
-            self.update_status.set("REPAIR REQUIRED")
-            self.integrity_status.set("FAILED")
-            ttk.Button(self.primary_action_frame, text="REPAIR SYSTEM",
-                       command=self.repair).pack()
-
-        elif state == "READY":
-            self.sys_status.set("READY")
-            self.update_status.set("NONE")
-            self.integrity_status.set("VERIFIED")
-            ttk.Button(self.primary_action_frame, text="LAUNCH SYSTEM",
-                       command=self.launch).pack()
-
-        self._refresh_status_bar()
+        self._refresh_status()
 
     # ========================================================
-    # Manifest & Integrity
+    # Integrity
     # ========================================================
 
-    def _download_manifest_safe(self):
-        assets = self.latest_release.get("assets", [])
-        asset = next((a for a in assets if a.get("name") == MANIFEST_NAME), None)
-
+    def download_manifest(self):
+        asset = next((a for a in self.latest_release["assets"]
+                      if a["name"] == MANIFEST_NAME), None)
         if not asset:
             self.manifest = None
             return
-
         download(asset["browser_download_url"], MANIFEST_PATH)
         with open(MANIFEST_PATH, "r", encoding="utf-8") as f:
             self.manifest = json.load(f)
 
-    def verify_integrity(self, game_path):
-        expected = self.manifest.get("files", {}).get(GAME_EXE)
-        return expected and sha256(game_path) == expected
+    def verify_integrity(self, path):
+        return self.manifest["files"].get(GAME_EXE) == sha256(path)
 
     # ========================================================
     # Actions
@@ -284,68 +253,46 @@ class Launcher(tk.Tk):
             self.install_dir.set(path)
             self.cfg["install_dir"] = path
             save_config(self.cfg)
-            self.startup_check_async()
+            self.startup_async()
 
     def download_update(self):
-        self.clear_primary_actions()
+        self.clear_actions()
         self.update_status.set("DOWNLOADING")
-        self._refresh_status_bar()
+        self._refresh_status()
 
-        def _download():
-            assets = self.latest_release.get("assets", [])
-            asset = next((a for a in assets if a.get("name") == GAME_EXE), None)
-
+        def run():
+            asset = next((a for a in self.latest_release["assets"]
+                          if a["name"] == GAME_EXE), None)
             if not asset:
-                self.after(0, lambda: self.apply_state("UPDATE_REQUIRED"))
+                self.apply_state("UPDATE_REQUIRED")
                 return
+            download(asset["browser_download_url"], UPDATE_EXE)
+            self.after(0, self.apply_update)
 
-            try:
-                download(asset["browser_download_url"], UPDATE_EXE)
-            except Exception:
-                self.after(0, lambda: self.apply_state("UPDATE_REQUIRED"))
-                return
-
-            self.after(0, self.show_apply_update_button)
-
-        threading.Thread(target=_download, daemon=True).start()
-
-    def show_apply_update_button(self):
-        self.clear_primary_actions()
-        self.update_status.set("READY")
-        self._refresh_status_bar()
-        ttk.Button(self.primary_action_frame, text="APPLY UPDATE",
-                   command=self.apply_update).pack()
+        threading.Thread(target=run, daemon=True).start()
 
     def apply_update(self):
-        game = os.path.join(self.install_dir.get(), GAME_EXE)
+        self.clear_actions()
+        self.update_status.set("APPLYING")
+        self._refresh_status()
 
         with open(SWAP_SCRIPT, "w", encoding="utf-8") as f:
             f.write(f"""@echo off
 timeout /t 2 >nul
-move "{UPDATE_EXE}" "{game}"
+move "{UPDATE_EXE}" "{os.path.join(self.install_dir.get(), GAME_EXE)}"
 """)
 
-        def _apply_and_verify():
-            subprocess.call(["cmd", "/c", SWAP_SCRIPT])
+        subprocess.call(["cmd", "/c", SWAP_SCRIPT])
+        time.sleep(1)
 
-            if not os.path.exists(game):
-                self.after(0, lambda: self.apply_state("UPDATE_REQUIRED"))
-                return
-
+        game = os.path.join(self.install_dir.get(), GAME_EXE)
+        if os.path.exists(game):
             self.cfg["installed_version"] = normalize_version(
                 self.latest_release["tag_name"]
             )
             save_config(self.cfg)
 
-            self.after(0, self.destroy)
-
-        threading.Thread(target=_apply_and_verify, daemon=True).start()
-
-    def install(self):
-        self.download_update()
-
-    def repair(self):
-        self.download_update()
+        self.startup_async()
 
     def launch(self):
         subprocess.Popen([os.path.join(self.install_dir.get(), GAME_EXE)])
