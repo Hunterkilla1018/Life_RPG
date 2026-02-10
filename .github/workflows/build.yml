@@ -23,54 +23,50 @@ jobs:
           python -m pip install --upgrade pip
           pip install pyinstaller
 
+      # -------------------------------
+      # Build EXE
+      # -------------------------------
       - name: Build EXE
         run: |
           pyinstaller --onefile bootstrap.py --name LifeRPG
 
       # -------------------------------
-      # Create full install ZIP
+      # Create full install ZIP (Windows-safe)
       # -------------------------------
       - name: Create full install ZIP
-        shell: bash
+        shell: powershell
         run: |
-          mkdir package
-          cp dist/LifeRPG.exe package/
+          New-Item -ItemType Directory -Force -Path package
+          Copy-Item dist\LifeRPG.exe package\
 
-          cd package
-          zip -r ../LifeRPG_full.zip .
-          cd ..
+          Compress-Archive -Path package\* -DestinationPath LifeRPG_full.zip -Force
 
-          if [ ! -f LifeRPG_full.zip ]; then
-            echo "ERROR: LifeRPG_full.zip was not created"
+          if (!(Test-Path LifeRPG_full.zip)) {
+            Write-Error "LifeRPG_full.zip was not created"
             exit 1
-          fi
+          }
 
       # -------------------------------
       # Generate expanded manifest
       # -------------------------------
       - name: Generate expanded manifest
-        shell: bash
+        shell: powershell
         run: |
-          unzip LifeRPG_full.zip -d verify
+          Expand-Archive LifeRPG_full.zip verify -Force
 
-          echo '{ "files": {' > manifest.json
-          first=1
+          $files = Get-ChildItem verify -Recurse -File
+          $manifest = @{ files = @{} }
 
-          cd verify
-          find . -type f | while read file; do
-            rel="${file#./}"
-            hash=$(sha256sum "$file" | awk '{print $1}')
+          foreach ($file in $files) {
+            $rel = $file.FullName.Substring((Resolve-Path verify).Path.Length + 1)
+            $hash = (Get-FileHash $file.FullName -Algorithm SHA256).Hash.ToLower()
+            $manifest.files[$rel] = $hash
+          }
 
-            if [ $first -eq 0 ]; then
-              echo "," >> ../manifest.json
-            fi
-            first=0
+          $manifest | ConvertTo-Json -Depth 5 | Out-File manifest.json -Encoding utf8
 
-            echo "  \"${rel}\": \"${hash}\"" >> ../manifest.json
-          done
-
-          cd ..
-          echo '} }' >> manifest.json
+          Write-Host "Generated manifest:"
+          Get-Content manifest.json
 
       # -------------------------------
       # Upload release assets
