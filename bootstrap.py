@@ -8,13 +8,14 @@ import time
 import zipfile
 import tkinter as tk
 from tkinter import ttk, filedialog
+from datetime import datetime
 
 # ============================================================
 # Identity
 # ============================================================
 
 APP_NAME = "Life RPG"
-LAUNCHER_VERSION = "1.5.0-alpha4"
+LAUNCHER_VERSION = "1.5.0-alpha5"
 
 GITHUB_OWNER = "Hunterkilla1018"
 GITHUB_REPO = "Life_RPG"
@@ -96,7 +97,7 @@ class Launcher(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("LIFE RPG :: SYSTEM INTERFACE")
-        self.geometry("900x600")
+        self.geometry("1000x650")
         self.configure(bg="#0b0f14")
         self.resizable(False, False)
 
@@ -113,6 +114,20 @@ class Launcher(tk.Tk):
 
         self._build_ui()
         self.after(100, self.startup_async)
+
+    # ========================================================
+    # Logging
+    # ========================================================
+
+    def log(self, msg):
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        line = f"[{timestamp}] {msg}\n"
+
+        def append():
+            self.console.insert("end", line)
+            self.console.see("end")
+
+        self.after(0, append)
 
     # ========================================================
     # UI
@@ -139,8 +154,25 @@ class Launcher(tk.Tk):
         )
         self.status_label.pack(fill="x", padx=15)
 
-        self.actions = ttk.Frame(self)
-        self.actions.pack(pady=40)
+        main = ttk.Frame(self)
+        main.pack(fill="both", expand=True, padx=15)
+
+        self.actions = ttk.Frame(main)
+        self.actions.pack(pady=20)
+
+        console_frame = ttk.LabelFrame(main, text="System Log")
+        console_frame.pack(fill="both", expand=True, pady=10)
+
+        self.console = tk.Text(
+            console_frame,
+            height=12,
+            bg="#05070a",
+            fg="#b6f0ff",
+            insertbackground="#b6f0ff",
+            font=("Consolas", 9),
+            wrap="word"
+        )
+        self.console.pack(fill="both", expand=True)
 
         footer = ttk.Frame(self)
         footer.pack(side="bottom", pady=10)
@@ -167,7 +199,9 @@ class Launcher(tk.Tk):
         threading.Thread(target=self.startup_logic, daemon=True).start()
 
     def startup_logic(self):
+        self.log("Launcher starting")
         self.net_status.set("OK" if internet_available() else "OFFLINE")
+        self.log(f"NET: {'Internet OK' if self.net_status.get() == 'OK' else 'Offline'}")
         self._refresh_status()
 
         if self.net_status.get() == "OFFLINE":
@@ -177,26 +211,33 @@ class Launcher(tk.Tk):
         self.latest_release = fetch_latest_release()
         latest = normalize_version(self.latest_release["tag_name"])
         installed = normalize_version(self.cfg["installed_version"])
+        self.log(f"UPDATE: Latest version {latest}")
+        self.log(f"UPDATE: Installed version {installed or 'none'}")
 
         base = self.install_dir.get()
 
         if not base or not os.path.exists(base):
+            self.log("STATE: Not installed")
             self.apply_state("NOT_INSTALLED")
             return
 
         if not installed or installed != latest:
+            self.log("STATE: Update required")
             self.apply_state("UPDATE_REQUIRED")
             return
 
         self.load_manifest()
         if not self.manifest:
+            self.log("ERROR: Manifest missing")
             self.apply_state("MANIFEST_MISSING")
             return
 
         if not self.verify_all_files(base):
+            self.log("ERROR: Integrity check failed")
             self.apply_state("INTEGRITY_FAILED")
             return
 
+        self.log("STATE: Ready")
         self.apply_state("READY")
 
     # ========================================================
@@ -243,25 +284,28 @@ class Launcher(tk.Tk):
             self.manifest = None
             return
 
+        self.log("MANIFEST: Downloading")
         download(asset["browser_download_url"], RUNTIME_MANIFEST)
+
         with open(RUNTIME_MANIFEST, "r", encoding="utf-8") as f:
             self.manifest = json.load(f)
 
-        # 🔧 Copy manifest into install directory for transparency
         install_manifest = os.path.join(self.install_dir.get(), MANIFEST_NAME)
-        try:
-            with open(install_manifest, "w", encoding="utf-8") as f:
-                json.dump(self.manifest, f, indent=4)
-        except:
-            pass
+        with open(install_manifest, "w", encoding="utf-8") as f:
+            json.dump(self.manifest, f, indent=4)
+
+        self.log("MANIFEST: Loaded and copied")
 
     def verify_all_files(self, base_dir):
         for rel_path, expected_hash in self.manifest.get("files", {}).items():
             full_path = os.path.join(base_dir, rel_path)
             if not os.path.exists(full_path):
+                self.log(f"VERIFY: Missing {rel_path}")
                 return False
             if sha256(full_path) != expected_hash:
+                self.log(f"VERIFY: Hash mismatch {rel_path}")
                 return False
+        self.log("VERIFY: Integrity OK")
         return True
 
     # ========================================================
@@ -279,6 +323,7 @@ class Launcher(tk.Tk):
     def install(self):
         self.clear_actions()
         self.update_status.set("INSTALLING")
+        self.log("INSTALL: Downloading full package")
         self._refresh_status()
 
         def run():
@@ -287,6 +332,7 @@ class Launcher(tk.Tk):
                 None
             )
             if not asset:
+                self.log("ERROR: Full install ZIP missing")
                 self.apply_state("UPDATE_REQUIRED")
                 return
 
@@ -294,6 +340,7 @@ class Launcher(tk.Tk):
 
             with zipfile.ZipFile(ZIP_PATH, "r") as z:
                 z.extractall(self.install_dir.get())
+                self.log(f"INSTALL: Extracted {len(z.namelist())} files")
 
             self.cfg["installed_version"] = normalize_version(
                 self.latest_release["tag_name"]
@@ -307,6 +354,7 @@ class Launcher(tk.Tk):
     def download_update(self):
         self.clear_actions()
         self.update_status.set("DOWNLOADING")
+        self.log("UPDATE: Downloading EXE")
         self._refresh_status()
 
         def run():
@@ -315,12 +363,13 @@ class Launcher(tk.Tk):
                 None
             )
             if not asset:
+                self.log("ERROR: EXE missing from release")
                 self.apply_state("UPDATE_REQUIRED")
                 return
 
             download(asset["browser_download_url"], UPDATE_EXE)
-            target = os.path.join(self.install_dir.get(), GAME_EXE)
-            os.replace(UPDATE_EXE, target)
+            os.replace(UPDATE_EXE, os.path.join(self.install_dir.get(), GAME_EXE))
+            self.log("UPDATE: EXE replaced")
 
             self.cfg["installed_version"] = normalize_version(
                 self.latest_release["tag_name"]
@@ -332,6 +381,7 @@ class Launcher(tk.Tk):
         threading.Thread(target=run, daemon=True).start()
 
     def launch(self):
+        self.log("LAUNCH: Starting game")
         subprocess.Popen([os.path.join(self.install_dir.get(), GAME_EXE)])
         if self.cfg["close_on_launch"]:
             self.destroy()
