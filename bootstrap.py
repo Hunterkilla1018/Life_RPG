@@ -5,6 +5,7 @@ import urllib.request
 import subprocess
 import threading
 import time
+import zipfile
 import tkinter as tk
 from tkinter import ttk, filedialog
 
@@ -19,6 +20,7 @@ GITHUB_OWNER = "Hunterkilla1018"
 GITHUB_REPO = "Life_RPG"
 
 GAME_EXE = "LifeRPG.exe"
+FULL_INSTALL_ZIP = "LifeRPG_full.zip"
 MANIFEST_NAME = "manifest.json"
 
 # ============================================================
@@ -30,6 +32,7 @@ RUNTIME = os.path.join(APPDATA, "runtime")
 CONFIG_FILE = os.path.join(APPDATA, "launcher.json")
 MANIFEST_PATH = os.path.join(RUNTIME, MANIFEST_NAME)
 UPDATE_EXE = os.path.join(RUNTIME, "LifeRPG_update.exe")
+ZIP_PATH = os.path.join(RUNTIME, FULL_INSTALL_ZIP)
 SWAP_SCRIPT = os.path.join(RUNTIME, "apply_update.bat")
 
 os.makedirs(RUNTIME, exist_ok=True)
@@ -63,13 +66,10 @@ def load_config():
     }
     if not os.path.exists(CONFIG_FILE):
         return defaults.copy()
-
     with open(CONFIG_FILE, "r", encoding="utf-8") as f:
         data = json.load(f)
-
     for k, v in defaults.items():
         data.setdefault(k, v)
-
     save_config(data)
     return data
 
@@ -96,8 +96,8 @@ class Launcher(tk.Tk):
         super().__init__()
         self.title("LIFE RPG :: SYSTEM INTERFACE")
         self.geometry("900x600")
-        self.resizable(False, False)
         self.configure(bg="#0b0f14")
+        self.resizable(False, False)
 
         self.cfg = load_config()
         self.install_dir = tk.StringVar(value=self.cfg["install_dir"])
@@ -119,7 +119,7 @@ class Launcher(tk.Tk):
 
     def _build_ui(self):
         header = tk.Frame(self, bg="#0b0f14")
-        header.pack(fill="x", padx=15, pady=(15, 5))
+        header.pack(fill="x", padx=15, pady=10)
 
         tk.Label(
             header,
@@ -136,7 +136,7 @@ class Launcher(tk.Tk):
             font=("Consolas", 10),
             anchor="w"
         )
-        self.status_label.pack(fill="x", padx=15, pady=(0, 10))
+        self.status_label.pack(fill="x", padx=15)
 
         self.actions = ttk.Frame(self)
         self.actions.pack(pady=40)
@@ -159,7 +159,7 @@ class Launcher(tk.Tk):
             w.destroy()
 
     # ========================================================
-    # Startup
+    # Startup Logic
     # ========================================================
 
     def startup_async(self):
@@ -180,7 +180,7 @@ class Launcher(tk.Tk):
         base = self.install_dir.get()
         game = os.path.join(base, GAME_EXE)
 
-        if not base or not os.path.exists(game):
+        if not base or not os.path.exists(base):
             self.apply_state("NOT_INSTALLED")
             return
 
@@ -193,14 +193,14 @@ class Launcher(tk.Tk):
             self.apply_state("MANIFEST_MISSING")
             return
 
-        if not self.verify_integrity(game):
+        if not self.verify_all_files(base):
             self.apply_state("INTEGRITY_FAILED")
             return
 
         self.apply_state("READY")
 
     # ========================================================
-    # States
+    # State Handling
     # ========================================================
 
     def apply_state(self, state):
@@ -210,7 +210,7 @@ class Launcher(tk.Tk):
         states = {
             "NO_INTERNET": ("OFFLINE", "UNKNOWN"),
             "NOT_INSTALLED": ("INSTALL REQUIRED", "UNKNOWN"),
-            "UPDATE_REQUIRED": ("REQUIRED", "UNKNOWN"),
+            "UPDATE_REQUIRED": ("UPDATE REQUIRED", "UNKNOWN"),
             "MANIFEST_MISSING": ("MANIFEST MISSING", "UNKNOWN"),
             "INTEGRITY_FAILED": ("REPAIR REQUIRED", "FAILED"),
             "READY": ("NONE", "VERIFIED")
@@ -221,27 +221,40 @@ class Launcher(tk.Tk):
 
         if state == "READY":
             ttk.Button(self.actions, text="LAUNCH SYSTEM", command=self.launch).pack()
+        elif state == "NOT_INSTALLED":
+            ttk.Button(self.actions, text="INSTALL SYSTEM", command=self.install).pack()
+        elif state == "INTEGRITY_FAILED":
+            ttk.Button(self.actions, text="REPAIR SYSTEM", command=self.install).pack()
         else:
             ttk.Button(self.actions, text="DOWNLOAD UPDATE", command=self.download_update).pack()
 
         self._refresh_status()
 
     # ========================================================
-    # Integrity
+    # Manifest & Integrity
     # ========================================================
 
     def download_manifest(self):
-        asset = next((a for a in self.latest_release["assets"]
-                      if a["name"] == MANIFEST_NAME), None)
+        asset = next(
+            (a for a in self.latest_release["assets"] if a["name"] == MANIFEST_NAME),
+            None
+        )
         if not asset:
             self.manifest = None
             return
+
         download(asset["browser_download_url"], MANIFEST_PATH)
         with open(MANIFEST_PATH, "r", encoding="utf-8") as f:
             self.manifest = json.load(f)
 
-    def verify_integrity(self, path):
-        return self.manifest["files"].get(GAME_EXE) == sha256(path)
+    def verify_all_files(self, base_dir):
+        for rel_path, expected_hash in self.manifest.get("files", {}).items():
+            full_path = os.path.join(base_dir, rel_path)
+            if not os.path.exists(full_path):
+                return False
+            if sha256(full_path) != expected_hash:
+                return False
+        return True
 
     # ========================================================
     # Actions
@@ -255,27 +268,57 @@ class Launcher(tk.Tk):
             save_config(self.cfg)
             self.startup_async()
 
+    def install(self):
+        self.clear_actions()
+        self.update_status.set("INSTALLING")
+        self._refresh_status()
+
+        def run():
+            asset = next(
+                (a for a in self.latest_release["assets"] if a["name"] == FULL_INSTALL_ZIP),
+                None
+            )
+            if not asset:
+                self.apply_state("UPDATE_REQUIRED")
+                return
+
+            download(asset["browser_download_url"], ZIP_PATH)
+
+            try:
+                with zipfile.ZipFile(ZIP_PATH, "r") as z:
+                    z.extractall(self.install_dir.get())
+            except:
+                self.apply_state("UPDATE_REQUIRED")
+                return
+
+            self.cfg["installed_version"] = normalize_version(
+                self.latest_release["tag_name"]
+            )
+            save_config(self.cfg)
+            self.startup_async()
+
+        threading.Thread(target=run, daemon=True).start()
+
     def download_update(self):
         self.clear_actions()
         self.update_status.set("DOWNLOADING")
         self._refresh_status()
 
         def run():
-            asset = next((a for a in self.latest_release["assets"]
-                          if a["name"] == GAME_EXE), None)
+            asset = next(
+                (a for a in self.latest_release["assets"] if a["name"] == GAME_EXE),
+                None
+            )
             if not asset:
                 self.apply_state("UPDATE_REQUIRED")
                 return
+
             download(asset["browser_download_url"], UPDATE_EXE)
-            self.after(0, self.apply_update)
+            self.apply_update()
 
         threading.Thread(target=run, daemon=True).start()
 
     def apply_update(self):
-        self.clear_actions()
-        self.update_status.set("APPLYING")
-        self._refresh_status()
-
         with open(SWAP_SCRIPT, "w", encoding="utf-8") as f:
             f.write(f"""@echo off
 timeout /t 2 >nul
@@ -284,14 +327,6 @@ move "{UPDATE_EXE}" "{os.path.join(self.install_dir.get(), GAME_EXE)}"
 
         subprocess.call(["cmd", "/c", SWAP_SCRIPT])
         time.sleep(1)
-
-        game = os.path.join(self.install_dir.get(), GAME_EXE)
-        if os.path.exists(game):
-            self.cfg["installed_version"] = normalize_version(
-                self.latest_release["tag_name"]
-            )
-            save_config(self.cfg)
-
         self.startup_async()
 
     def launch(self):
