@@ -1,4 +1,4 @@
-name: Build Life RPG
+name: Build LifeRPG Release
 
 on:
   push:
@@ -20,6 +20,7 @@ jobs:
 
       - name: Install dependencies
         run: |
+          python -m pip install --upgrade pip
           pip install pyinstaller
 
       - name: Build EXE
@@ -27,33 +28,57 @@ jobs:
           pyinstaller --onefile bootstrap.py --name LifeRPG
 
       # -------------------------------
-      # 🔐 Generate manifest.json
+      # Create full install ZIP
       # -------------------------------
-      - name: Generate manifest.json
+      - name: Create full install ZIP
         shell: bash
         run: |
-          cd dist
+          mkdir package
+          cp dist/LifeRPG.exe package/
 
-          EXE_NAME="LifeRPG.exe"
-          HASH=$(sha256sum "$EXE_NAME" | awk '{print $1}')
+          cd package
+          zip -r ../LifeRPG_full.zip .
+          cd ..
 
-          cat > manifest.json <<EOF
-          {
-            "files": {
-              "$EXE_NAME": "$HASH"
-            }
-          }
-          EOF
-
-          echo "Manifest generated:"
-          cat manifest.json
+          if [ ! -f LifeRPG_full.zip ]; then
+            echo "ERROR: LifeRPG_full.zip was not created"
+            exit 1
+          fi
 
       # -------------------------------
-      # 🚀 Upload release assets
+      # Generate expanded manifest
       # -------------------------------
-      - name: Upload EXE and manifest to release
+      - name: Generate expanded manifest
+        shell: bash
+        run: |
+          unzip LifeRPG_full.zip -d verify
+
+          echo '{ "files": {' > manifest.json
+          first=1
+
+          cd verify
+          find . -type f | while read file; do
+            rel="${file#./}"
+            hash=$(sha256sum "$file" | awk '{print $1}')
+
+            if [ $first -eq 0 ]; then
+              echo "," >> ../manifest.json
+            fi
+            first=0
+
+            echo "  \"${rel}\": \"${hash}\"" >> ../manifest.json
+          done
+
+          cd ..
+          echo '} }' >> manifest.json
+
+      # -------------------------------
+      # Upload release assets
+      # -------------------------------
+      - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:
           files: |
             dist/LifeRPG.exe
-            dist/manifest.json
+            LifeRPG_full.zip
+            manifest.json
