@@ -9,8 +9,11 @@ import tkinter as tk
 from tkinter import ttk, filedialog
 from datetime import datetime
 
-APP_NAME = "Life RPG"
-LAUNCHER_VERSION = "1.5.0-alpha8"
+# =========================
+# VERSION / IDENTITY
+# =========================
+
+LAUNCHER_VERSION = "1.5.0-alpha10"
 
 GITHUB_OWNER = "Hunterkilla1018"
 GITHUB_REPO = "Life_RPG"
@@ -18,6 +21,10 @@ GITHUB_REPO = "Life_RPG"
 GAME_EXE = "LifeRPG.exe"
 FULL_INSTALL_ZIP = "LifeRPG_full.zip"
 MANIFEST_NAME = "manifest.json"
+
+# =========================
+# PATHS
+# =========================
 
 APPDATA = os.path.join(os.environ["APPDATA"], "LifeRPG")
 RUNTIME = os.path.join(APPDATA, "runtime")
@@ -27,7 +34,9 @@ ZIP_PATH = os.path.join(RUNTIME, FULL_INSTALL_ZIP)
 
 os.makedirs(RUNTIME, exist_ok=True)
 
-# ---------------- helpers ----------------
+# =========================
+# HELPERS
+# =========================
 
 def normalize_version(v):
     return v.lstrip("v").strip() if v else ""
@@ -47,44 +56,46 @@ def internet_available():
         return False
 
 def load_config():
-    defaults = {
+    cfg = {
         "install_dir": "",
         "installed_version": "",
         "close_on_launch": True
     }
     if os.path.exists(CONFIG_FILE):
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-            defaults.update(json.load(f))
+            cfg.update(json.load(f))
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-        json.dump(defaults, f, indent=4)
-    return defaults
+        json.dump(cfg, f, indent=4)
+    return cfg
 
 def fetch_latest_release():
-    with urllib.request.urlopen(
-        f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest",
-        timeout=10
-    ) as r:
+    url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest"
+    with urllib.request.urlopen(url, timeout=10) as r:
         return json.loads(r.read().decode())
 
 def download(url, dest):
     urllib.request.urlretrieve(url, dest)
 
-# ---------------- launcher ----------------
+# =========================
+# LAUNCHER
+# =========================
 
 class Launcher(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("LIFE RPG :: SYSTEM INTERFACE")
-        self.geometry("1000x700")
+
+        self.title("Life RPG :: Launcher")
+        self.geometry("900x650")
         self.configure(bg="#0b0f14")
 
         self.cfg = load_config()
         self.install_dir = tk.StringVar(value=self.cfg["install_dir"])
+
         self.latest_release = None
         self.manifest = None
         self.frozen = False
 
-        self.sys = tk.StringVar(value="INITIALIZING")
+        self.sys = tk.StringVar(value="INIT")
         self.net = tk.StringVar(value="UNKNOWN")
         self.integrity = tk.StringVar(value="UNKNOWN")
         self.update = tk.StringVar(value="UNKNOWN")
@@ -92,20 +103,21 @@ class Launcher(tk.Tk):
         self._ui()
         self.after(100, self.startup_async)
 
-    # -------- logging --------
+    # ---------- LOGGING ----------
 
     def log(self, msg):
         ts = datetime.now().strftime("%H:%M:%S")
         self.console.insert("end", f"[{ts}] {msg}\n")
         self.console.see("end")
 
-    # -------- UI --------
+    # ---------- UI ----------
 
     def _ui(self):
         tk.Label(
             self,
-            text=f"LIFE RPG :: SYSTEM INTERFACE   v{LAUNCHER_VERSION}",
-            fg="#7ddcff", bg="#0b0f14",
+            text=f"Life RPG Launcher  v{LAUNCHER_VERSION}",
+            fg="#7ddcff",
+            bg="#0b0f14",
             font=("Consolas", 14, "bold")
         ).pack(anchor="w", padx=15, pady=10)
 
@@ -123,8 +135,8 @@ class Launcher(tk.Tk):
 
         footer = ttk.Frame(self)
         footer.pack(pady=5)
-        ttk.Entry(footer, textvariable=self.install_dir, width=90).pack()
-        ttk.Button(footer, text="Browse…", command=self.browse).pack()
+        ttk.Entry(footer, textvariable=self.install_dir, width=80).pack()
+        ttk.Button(footer, text="Browse", command=self.browse).pack()
 
         self.refresh_status()
 
@@ -138,7 +150,7 @@ class Launcher(tk.Tk):
         for w in self.actions.winfo_children():
             w.destroy()
 
-    # -------- startup --------
+    # ---------- STARTUP ----------
 
     def startup_async(self):
         if self.frozen:
@@ -146,7 +158,8 @@ class Launcher(tk.Tk):
         threading.Thread(target=self.startup_logic, daemon=True).start()
 
     def startup_logic(self):
-        self.log("Startup check")
+        self.log("Startup")
+
         self.net.set("OK" if internet_available() else "OFFLINE")
         self.refresh_status()
 
@@ -179,7 +192,7 @@ class Launcher(tk.Tk):
 
         self.state("READY")
 
-    # -------- states --------
+    # ---------- STATES ----------
 
     def state(self, s):
         self.clear_actions()
@@ -206,7 +219,7 @@ class Launcher(tk.Tk):
 
         self.refresh_status()
 
-    # -------- manifest / verify --------
+    # ---------- MANIFEST ----------
 
     def load_manifest(self):
         asset = next(
@@ -214,14 +227,16 @@ class Launcher(tk.Tk):
             None
         )
         if not asset:
-            self.log("Manifest missing from release")
+            self.log("ERROR: manifest.json missing from release")
             return False
 
         download(asset["browser_download_url"], RUNTIME_MANIFEST)
-        with open(RUNTIME_MANIFEST, "r", encoding="utf-8") as f:
+
+        # 🔑 BOM-safe load
+        with open(RUNTIME_MANIFEST, "r", encoding="utf-8-sig") as f:
             self.manifest = json.load(f)
 
-        with open(os.path.join(self.install_dir.get(), MANIFEST_NAME), "w") as f:
+        with open(os.path.join(self.install_dir.get(), MANIFEST_NAME), "w", encoding="utf-8") as f:
             json.dump(self.manifest, f, indent=4)
 
         self.log("Manifest loaded")
@@ -239,7 +254,7 @@ class Launcher(tk.Tk):
         self.log("Integrity OK")
         return True
 
-    # -------- actions --------
+    # ---------- ACTIONS ----------
 
     def browse(self):
         if self.frozen:
@@ -248,14 +263,14 @@ class Launcher(tk.Tk):
         if path:
             self.install_dir.set(path)
             self.cfg["install_dir"] = path
-            with open(CONFIG_FILE, "w") as f:
+            with open(CONFIG_FILE, "w", encoding="utf-8") as f:
                 json.dump(self.cfg, f, indent=4)
             self.startup_async()
 
     def install(self):
         self.frozen = True
         self.progress["value"] = 0
-        self.log("INSTALL/REPAIR start")
+        self.log("INSTALL / REPAIR started")
 
         def run():
             asset = next(
@@ -263,7 +278,7 @@ class Launcher(tk.Tk):
                 None
             )
             if not asset:
-                self.log("ERROR: Full install ZIP missing")
+                self.log("ERROR: Full install ZIP missing from release")
                 self.frozen = False
                 self.startup_async()
                 return
@@ -279,10 +294,10 @@ class Launcher(tk.Tk):
             self.cfg["installed_version"] = normalize_version(
                 self.latest_release["tag_name"]
             )
-            with open(CONFIG_FILE, "w") as f:
+            with open(CONFIG_FILE, "w", encoding="utf-8") as f:
                 json.dump(self.cfg, f, indent=4)
 
-            self.log("INSTALL/REPAIR complete")
+            self.log("INSTALL / REPAIR complete")
             self.frozen = False
             self.startup_async()
 
@@ -293,7 +308,9 @@ class Launcher(tk.Tk):
         if self.cfg["close_on_launch"]:
             self.destroy()
 
-# ---------------- entry ----------------
+# =========================
+# ENTRY
+# =========================
 
 if __name__ == "__main__":
     Launcher().mainloop()
