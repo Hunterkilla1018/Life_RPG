@@ -14,7 +14,7 @@ from datetime import datetime
 # VERSION / IDENTITY
 # =========================
 
-LAUNCHER_VERSION = "1.5.0"  # [lifeRPG update]
+LAUNCHER_VERSION = "1.5.0-alpha11"  # [lifeRPG update]
 
 GITHUB_OWNER = "Hunterkilla1018"
 GITHUB_REPO = "Life_RPG"
