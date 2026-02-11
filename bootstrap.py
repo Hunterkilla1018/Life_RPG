@@ -324,17 +324,29 @@ class Launcher(tk.Tk):
         os.makedirs(os.path.join(base, GAME_SAVE_DIR_NAME), exist_ok=True)
 
     def launch(self):
-        exe_path = os.path.join(self.install_dir.get(), GAME_EXE)
+        base = self.install_dir.get()
+        exe_path = os.path.abspath(os.path.join(base, GAME_EXE))
 
-        if not os.path.exists(exe_path):
-            self.log("ERROR: Game executable missing")
+        if not base or not os.path.exists(base):
+            self.log("ERROR: Install directory invalid")
             return
 
-        self.log("Launching game")
-        subprocess.Popen([exe_path])
+        if not os.path.exists(exe_path):
+            self.log(f"ERROR: Game executable missing at {exe_path}")
+            return
 
-        if self.cfg["close_on_launch"]:
-            self.destroy()
+        self.log(f"Launching game from: {exe_path}")
+
+        try:
+            # Launch with explicit working directory
+            subprocess.Popen([exe_path], cwd=base)
+
+            if self.cfg["close_on_launch"]:
+                self.destroy()
+
+        except Exception as e:
+            self.log(f"ERROR: Failed to launch game: {e}")
+
 
 # =========================
 # ENTRY
