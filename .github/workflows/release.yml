@@ -1,0 +1,52 @@
+name: Build & Release LifeRPG
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+
+      # ---------- BUILD LAUNCHER ----------
+      - name: Build Launcher
+        run: |
+          pyinstaller LifeRPG_Launcher.spec
+
+      # ---------- BUILD GAME ----------
+      - name: Build Game
+        run: |
+          pyinstaller LifeRPG_Game.spec
+
+      # ---------- GENERATE MANIFEST ----------
+      - name: Generate manifest
+        run: |
+          python scripts/generate_manifest.py
+
+      # ---------- BUILD GAME ZIP ----------
+      - name: Build game ZIP
+        run: |
+          python scripts/build_zip.py
+
+      # ---------- UPLOAD RELEASE ASSETS ----------
+      - name: Upload assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/LifeRPG_Launcher/LifeRPG_Launcher.exe
+            dist/LifeRPG_full.zip
+            dist/manifest.json
