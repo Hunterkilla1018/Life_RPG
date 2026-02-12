@@ -1,10 +1,10 @@
-import hashlib
-import json
 import os
+import json
+import hashlib
 
-DIST = "dist"
-EXE = "LifeRPG.exe"
-OUT = os.path.join(DIST, "manifest.json")
+BUILD_DIR = os.path.join("dist", "LifeRPG")
+OUTPUT = "manifest.json"
+
 
 def sha256(path):
     h = hashlib.sha256()
@@ -13,24 +13,23 @@ def sha256(path):
             h.update(chunk)
     return h.hexdigest()
 
-exe_path = None
 
-for root, _, files in os.walk("dist"):
-    if EXE in files:
-        exe_path = os.path.join(root, EXE)
-        break
-
-if not exe_path:
-    raise RuntimeError("LifeRPG.exe not found")
+if not os.path.exists(BUILD_DIR):
+    raise RuntimeError("dist/LifeRPG folder not found")
 
 manifest = {
-    "files": {
-        EXE: sha256(exe_path)
-    }
+    "version": "AUTO",
+    "files": {}
 }
 
-os.makedirs(DIST, exist_ok=True)
-with open(OUT, "w", encoding="utf-8") as f:
+for root, dirs, files in os.walk(BUILD_DIR):
+    for file in files:
+        full_path = os.path.join(root, file)
+        rel_path = os.path.relpath(full_path, BUILD_DIR)
+        rel_path = rel_path.replace("\\", "/")
+        manifest["files"][rel_path] = sha256(full_path)
+
+with open(OUTPUT, "w") as f:
     json.dump(manifest, f, indent=4)
 
-print("Manifest generated")
+print("manifest.json generated successfully.")
