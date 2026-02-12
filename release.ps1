@@ -3,7 +3,7 @@ param(
 )
 
 if (-not $Version) {
-    Write-Host "Usage: ./release.ps1 1.5.3"
+    Write-Host "Usage: ./release.ps1 1.6.8"
     exit 1
 }
 
@@ -29,6 +29,7 @@ if (Test-Path build) { Remove-Item -Recurse -Force build }
 # Build Launcher
 # ----------------------------------------
 Write-Host "Building Launcher..."
+$env:LAUNCHER_VERSION = $Tag
 pyinstaller LifeRPG_Launcher.spec --clean -y
 if ($LASTEXITCODE -ne 0) { exit 1 }
 
@@ -38,6 +39,14 @@ if ($LASTEXITCODE -ne 0) { exit 1 }
 Write-Host "Building Game..."
 pyinstaller LifeRPG_Game.spec --clean -y
 if ($LASTEXITCODE -ne 0) { exit 1 }
+
+# ----------------------------------------
+# Verify Game Build
+# ----------------------------------------
+if (!(Test-Path "dist\LifeRPG.exe") -and !(Test-Path "dist\LifeRPG")) {
+    Write-Error "Game build not detected in dist folder."
+    exit 1
+}
 
 # ----------------------------------------
 # Generate Manifest
@@ -52,64 +61,79 @@ if ($LASTEXITCODE -ne 0) { exit 1 }
 Write-Host "Creating full ZIP..."
 if (Test-Path $FullZip) { Remove-Item $FullZip }
 
-if (!(Test-Path "dist\LifeRPG")) {
-    Write-Error "dist\LifeRPG not found!"
-    exit 1
+# Zip everything in dist except launcher
+$items = Get-ChildItem dist | Where-Object {
+    $_.Name -notlike "LifeRPG_Launcher*"
 }
 
-Compress-Archive -Path "dist\LifeRPG\*" `
+Compress-Archive -Path $items.FullName `
                  -DestinationPath $FullZip `
                  -Force
 
 # ----------------------------------------
-# Create Patch ZIP
+# Create Patch (Option B)
 # ----------------------------------------
-Write-Host "Checking previous release..."
+Write-Host "Checking previous release for patch diff..."
 
-$PreviousTag = gh release list --limit 1 --json tagName --jq ".[0].tagName"
+$PreviousTag = gh release list --limit 2 --json tagName --jq ".[1].tagName"
 
 if ($PreviousTag) {
 
-    Write-Host "Previous release found: $PreviousTag"
+    Write-Host "Previous release: $PreviousTag"
 
-    if (Test-Path $PatchZip) { Remove-Item $PatchZip }
+    if (Test-Path prev_manifest) { Remove-Item -Recurse -Force prev_manifest }
+    mkdir prev_manifest
 
     gh release download $PreviousTag `
         --pattern manifest.json `
-        --dir prev_manifest
+        --dir prev_manifest `
+        --clobber
 
-    $OldManifest = Get-Content "prev_manifest/manifest.json" | ConvertFrom-Json
-    $NewManifest = Get-Content $Manifest | ConvertFrom-Json
+    if (Test-Path "prev_manifest/manifest.json") {
 
-    $ChangedFiles = @()
+        $OldManifest = Get-Content "prev_manifest/manifest.json" | ConvertFrom-Json
+        $NewManifest = Get-Content $Manifest | ConvertFrom-Json
 
-    foreach ($file in $NewManifest.files.PSObject.Properties.Name) {
-        if ($OldManifest.files.$file -ne $NewManifest.files.$file) {
-            $ChangedFiles += "dist\LifeRPG\$file"
+        $ChangedFiles = @()
+
+        foreach ($file in $NewManifest.files.PSObject.Properties.Name) {
+            if ($OldManifest.files.$file -ne $NewManifest.files.$file) {
+
+                # Detect onefile or folder mode
+                if (Test-Path "dist\$file") {
+                    $ChangedFiles += "dist\$file"
+                }
+                elseif (Test-Path "dist\LifeRPG\$file") {
+                    $ChangedFiles += "dist\LifeRPG\$file"
+                }
+            }
+        }
+
+        if ($ChangedFiles.Count -gt 0) {
+            Compress-Archive -Path $ChangedFiles `
+                             -DestinationPath $PatchZip `
+                             -Force
+
+            Write-Host "Patch created with $($ChangedFiles.Count) changed files."
+        }
+        else {
+            Write-Host "No changed files detected. Skipping patch."
         }
     }
-
-    if ($ChangedFiles.Count -gt 0) {
-        Compress-Archive -Path $ChangedFiles `
-                         -DestinationPath $PatchZip `
-                         -Force
-
-        Write-Host "Patch created with $($ChangedFiles.Count) changed files."
-    }
     else {
-        Write-Host "No changes detected. Skipping patch."
+        Write-Host "Previous manifest not found. Skipping patch."
     }
 
     Remove-Item -Recurse -Force prev_manifest
 }
 else {
-    Write-Host "No previous release found. Skipping patch creation."
+    Write-Host "No previous release found. Skipping patch."
 }
 
 # ----------------------------------------
 # Git Commit & Tag
 # ----------------------------------------
-Write-Host "Committing..."
+Write-Host "Committing changes..."
 git add .
 git commit -m "Release $Version"
 
