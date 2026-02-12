@@ -50,7 +50,11 @@ jobs:
       # Build Game
       # ----------------------------------------
       - name: Build Launcher
-        run: pyinstaller LifeRPG_Launcher.spec --clean --onefile -y
+        shell: pwsh
+        run: |
+            $env:LAUNCHER_VERSION = "${{ github.ref_name }}"
+            pyinstaller LifeRPG_Launcher.spec --clean -y
+
 
 
       # ----------------------------------------

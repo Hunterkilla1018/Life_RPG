@@ -9,10 +9,11 @@ from tkinter import ttk, filedialog
 from datetime import datetime
 
 # =========================
-# VERSION / IDENTITY
+# VERSION (Dynamic from CI)
 # =========================
 
-LAUNCHER_VERSION = "1.6.0"
+raw_version = os.environ.get("LAUNCHER_VERSION", "dev")
+LAUNCHER_VERSION = raw_version.lstrip("v")
 
 GITHUB_OWNER = "Hunterkilla1018"
 GITHUB_REPO = "Life_RPG"
@@ -24,7 +25,6 @@ PATCH_ZIP = "LifeRPG_patch.zip"
 APPDATA = os.path.join(os.environ.get("APPDATA", os.getcwd()), "LifeRPG")
 RUNTIME = os.path.join(APPDATA, "runtime")
 CONFIG_FILE = os.path.join(APPDATA, "launcher.json")
-
 ZIP_PATH = os.path.join(RUNTIME, "download.zip")
 
 GAME_SAVE_DIR_NAME = "life_rpg_save"
@@ -55,8 +55,6 @@ def load_config():
         "install_dir": "",
         "installed_version": ""
     }
-
-    os.makedirs(APPDATA, exist_ok=True)
 
     if os.path.exists(CONFIG_FILE):
         try:
@@ -90,8 +88,6 @@ class Launcher(tk.Tk):
         self._ui()
         self.after(100, self.startup)
 
-    # ---------- UI ----------
-
     def _ui(self):
         ttk.Label(self, text=f"Life RPG Launcher v{LAUNCHER_VERSION}").pack(pady=10)
 
@@ -111,8 +107,6 @@ class Launcher(tk.Tk):
         ts = datetime.now().strftime("%H:%M:%S")
         self.console.insert("end", f"[{ts}] {msg}\n")
         self.console.see("end")
-
-    # ---------- STARTUP ----------
 
     def startup(self):
         threading.Thread(target=self.check_updates, daemon=True).start()
@@ -136,18 +130,15 @@ class Launcher(tk.Tk):
 
             game_path = os.path.join(install_path, GAME_EXE)
 
-            # Version mismatch → update
             if installed_version != latest_version:
                 self.set_action("Update", self.update_game)
                 return
 
-            # EXE missing → repair
             if not os.path.exists(game_path):
                 self.log("Game executable missing. Repair required.")
                 self.set_action("Repair", self.install_full)
                 return
 
-            # Everything OK
             self.set_action("Launch", self.launch)
 
         except Exception as e:
@@ -159,9 +150,42 @@ class Launcher(tk.Tk):
             command=lambda: threading.Thread(target=command, daemon=True).start()
         )
 
-    # =========================
-    # UPDATE / INSTALL
-    # =========================
+    def update_game(self):
+        self.log("Attempting patch update...")
+
+        patch_asset = next(
+            (a for a in self.latest_release["assets"]
+             if a["name"] == PATCH_ZIP),
+            None
+        )
+
+        if patch_asset:
+            try:
+                download(patch_asset["browser_download_url"], ZIP_PATH)
+                if self.apply_zip(ZIP_PATH):
+                    self.finalize_update()
+                    return
+            except Exception as e:
+                self.log(f"Patch failed: {e}")
+
+        self.log("Falling back to full install...")
+
+        if not self.download_asset(FULL_INSTALL_ZIP):
+            self.log("Full install ZIP missing.")
+            return
+
+        if self.apply_zip(ZIP_PATH):
+            self.finalize_update()
+
+    def install_full(self):
+        self.log("Downloading full install...")
+
+        if not self.download_asset(FULL_INSTALL_ZIP):
+            self.log("Full install ZIP missing.")
+            return
+
+        if self.apply_zip(ZIP_PATH):
+            self.finalize_update()
 
     def download_asset(self, name):
         asset = next(
@@ -174,53 +198,6 @@ class Launcher(tk.Tk):
         download(asset["browser_download_url"], ZIP_PATH)
         return True
 
-    def update_game(self):
-        self.log("Attempting patch update...")
-
-        patch_asset = next(
-            (a for a in self.latest_release["assets"]
-             if a["name"] == PATCH_ZIP),
-            None
-        )
-
-        # Try patch first
-        if patch_asset:
-            try:
-                download(patch_asset["browser_download_url"], ZIP_PATH)
-                if self.apply_zip(ZIP_PATH):
-                    self.finalize_update()
-                    return
-            except Exception as e:
-                self.log(f"Patch failed: {e}")
-
-        # Fallback to full
-        self.log("Falling back to full install...")
-
-        full_asset = next(
-            (a for a in self.latest_release["assets"]
-             if a["name"] == FULL_INSTALL_ZIP),
-            None
-        )
-
-        if not full_asset:
-            self.log("ERROR: Full install ZIP missing from release.")
-            return
-
-        download(full_asset["browser_download_url"], ZIP_PATH)
-
-        if self.apply_zip(ZIP_PATH):
-            self.finalize_update()
-
-    def install_full(self):
-        self.log("Downloading full install...")
-
-        if not self.download_asset(FULL_INSTALL_ZIP):
-            self.log("ERROR: Full install ZIP missing.")
-            return
-
-        if self.apply_zip(ZIP_PATH):
-            self.finalize_update()
-
     def apply_zip(self, zip_path):
         try:
             with zipfile.ZipFile(zip_path) as z:
@@ -228,10 +205,8 @@ class Launcher(tk.Tk):
                     if GAME_SAVE_DIR_NAME in name:
                         continue
                     z.extract(name, self.install_dir.get())
-
             self.log("Files applied successfully.")
             return True
-
         except Exception as e:
             self.log(f"ZIP ERROR: {e}")
             return False
@@ -246,10 +221,6 @@ class Launcher(tk.Tk):
         self.log("Update complete.")
         self.set_action("Launch", self.launch)
 
-    # =========================
-    # ACTIONS
-    # =========================
-
     def browse(self):
         path = filedialog.askdirectory()
         if path:
@@ -260,17 +231,12 @@ class Launcher(tk.Tk):
 
     def launch(self):
         exe = os.path.join(self.install_dir.get(), GAME_EXE)
-
         if os.path.exists(exe):
             subprocess.Popen([exe])
             self.destroy()
         else:
             self.log("Game executable missing.")
 
-
-# =========================
-# ENTRY WITH CRASH LOGGING
-# =========================
 
 if __name__ == "__main__":
     try:
