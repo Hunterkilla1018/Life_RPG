@@ -1,52 +1,124 @@
 name: Build & Release LifeRPG
 
 on:
-  release:
-    types: [published]
+  push:
+    tags:
+      - "v*"
 
 jobs:
   build:
     runs-on: windows-latest
 
     steps:
+      # ----------------------------------------
+      # Checkout
+      # ----------------------------------------
       - name: Checkout repo
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
+      # ----------------------------------------
+      # Setup Python
+      # ----------------------------------------
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install deps
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install pyinstaller
 
-      # ---------- BUILD LAUNCHER ----------
+      # ----------------------------------------
+      # Clean build folders (fix dist error)
+      # ----------------------------------------
+      - name: Clean build folders
+        shell: pwsh
+        run: |
+          if (Test-Path dist) { Remove-Item -Recurse -Force dist }
+          if (Test-Path build) { Remove-Item -Recurse -Force build }
+
+      # ----------------------------------------
+      # Build Launcher
+      # ----------------------------------------
       - name: Build Launcher
-        run: |
-          pyinstaller LifeRPG_Launcher.spec
+        run: pyinstaller LifeRPG_Launcher.spec --clean -y
 
-      # ---------- BUILD GAME ----------
+      # ----------------------------------------
+      # Build Game
+      # ----------------------------------------
       - name: Build Game
-        run: |
-          pyinstaller LifeRPG_Game.spec
+        run: pyinstaller LifeRPG_Game.spec --clean -y
 
-      # ---------- GENERATE MANIFEST ----------
+      # ----------------------------------------
+      # Generate Manifest
+      # ----------------------------------------
       - name: Generate manifest
-        run: |
-          python scripts/generate_manifest.py
+        run: python scripts/generate_manifest.py
 
-      # ---------- BUILD GAME ZIP ----------
-      - name: Build game ZIP
+      # ----------------------------------------
+      # Create Full Install ZIP
+      # ----------------------------------------
+      - name: Create full install ZIP
+        shell: pwsh
         run: |
-          python scripts/build_zip.py
+          if (Test-Path LifeRPG_full.zip) { Remove-Item LifeRPG_full.zip }
 
-      # ---------- UPLOAD RELEASE ASSETS ----------
-      - name: Upload assets
+          Compress-Archive -Path dist\LifeRPG_Game\* `
+                           -DestinationPath LifeRPG_full.zip `
+                           -Force
+
+      # ----------------------------------------
+      # Create Patch ZIP (Auto Diff)
+      # ----------------------------------------
+      - name: Create patch ZIP
+        shell: pwsh
+        run: |
+          $currentTag = "${{ github.ref_name }}"
+
+          $previousTag = git tag --sort=-creatordate | Select-Object -Skip 1 -First 1
+
+          if (-not $previousTag) {
+              Write-Host "No previous tag found. Skipping patch."
+              exit 0
+          }
+
+          Write-Host "Previous tag: $previousTag"
+
+          git fetch --tags
+
+          git show "$previousTag:manifest.json" > old_manifest.json
+
+          $old = Get-Content old_manifest.json | ConvertFrom-Json
+          $new = Get-Content manifest.json | ConvertFrom-Json
+
+          $changed = @()
+
+          foreach ($file in $new.files.PSObject.Properties.Name) {
+              if ($old.files.$file -ne $new.files.$file) {
+                  $changed += "dist\LifeRPG_Game\$file"
+              }
+          }
+
+          if ($changed.Count -eq 0) {
+              Write-Host "No changed files detected."
+              exit 0
+          }
+
+          Compress-Archive -Path $changed `
+                           -DestinationPath LifeRPG_patch.zip `
+                           -Force
+
+      # ----------------------------------------
+      # Upload Release Assets
+      # ----------------------------------------
+      - name: Upload Release Assets
         uses: softprops/action-gh-release@v2
         with:
           files: |
             dist/LifeRPG_Launcher/LifeRPG_Launcher.exe
-            dist/LifeRPG_full.zip
-            dist/manifest.json
+            LifeRPG_full.zip
+            LifeRPG_patch.zip
+            manifest.json
