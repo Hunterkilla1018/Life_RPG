@@ -1,8 +1,8 @@
 {
     "version": "AUTO",
     "files": {
-        "LifeRPG/LifeRPG.exe": "be0dabdcfbd116f19c5b635ea6d461febf923fa5ea2532496756f9dfab76479b",
-        "LifeRPG/_internal/base_library.zip": "9f6b36d0be970eef6a032d64fe353be79191a1dd5d91a7096d6c99b262a762ae",
+        "LifeRPG/LifeRPG.exe": "720f7198ac4fb2a6fdafa6dae439f137793fe289171d6f75e06db5e015933de0",
+        "LifeRPG/_internal/base_library.zip": "374882de503adcf2bd80e93c2feaf1828fe7f1331ad484550b4d8176100aa436",
         "LifeRPG/_internal/libcrypto-3.dll": "e03dd02fdcfb791981c9962827cfcf495f2a47a514c1526efb57f847a9df514a",
         "LifeRPG/_internal/libssl-3.dll": "1e4bc0638682bfcbb36f4465d6a2e9944d917a60f05ecc8ddf9e96847e05e13f",
         "LifeRPG/_internal/python314.dll": "1ac15e2224581fc678bbd17728b9aa538d47b891b72c76499ef07e54cd74f151",
