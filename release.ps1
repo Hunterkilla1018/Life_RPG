@@ -3,107 +3,133 @@ param(
 )
 
 if (-not $Version) {
-    Write-Host "Usage: ./release.ps1 1.5.2"
-    exit
+    Write-Host "Usage: ./release.ps1 1.5.3"
+    exit 1
 }
 
 $Tag = "v$Version"
 $Repo = "Hunterkilla1018/Life_RPG"
+
 $FullZip = "LifeRPG_full.zip"
 $PatchZip = "LifeRPG_patch.zip"
-$ManifestFile = "manifest.json"
+$Manifest = "manifest.json"
 
-Write-Host "========================================="
-Write-Host " Releasing Life RPG $Version"
-Write-Host "========================================="
+Write-Host "====================================="
+Write-Host " Releasing LifeRPG $Version"
+Write-Host "====================================="
 
-# ----------------------------
-# CLEAN
-# ----------------------------
-
+# ----------------------------------------
+# Clean
+# ----------------------------------------
+Write-Host "Cleaning build folders..."
 if (Test-Path dist) { Remove-Item -Recurse -Force dist }
 if (Test-Path build) { Remove-Item -Recurse -Force build }
 
-# ----------------------------
-# BUILD
-# ----------------------------
+# ----------------------------------------
+# Build Launcher
+# ----------------------------------------
+Write-Host "Building Launcher..."
+pyinstaller LifeRPG_Launcher.spec --clean -y
+if ($LASTEXITCODE -ne 0) { exit 1 }
 
-pyinstaller LifeRPG.spec --clean -y
-if ($LASTEXITCODE -ne 0) { exit }
+# ----------------------------------------
+# Build Game
+# ----------------------------------------
+Write-Host "Building Game..."
+pyinstaller LifeRPG_Game.spec --clean -y
+if ($LASTEXITCODE -ne 0) { exit 1 }
 
-# ----------------------------
-# GENERATE MANIFEST
-# ----------------------------
+# ----------------------------------------
+# Generate Manifest
+# ----------------------------------------
+Write-Host "Generating manifest..."
+python scripts/generate_manifest.py
+if ($LASTEXITCODE -ne 0) { exit 1 }
 
-python generate_manifest.py
-if ($LASTEXITCODE -ne 0) { exit }
-
-# ----------------------------
-# CREATE FULL ZIP
-# ----------------------------
-
+# ----------------------------------------
+# Create Full ZIP
+# ----------------------------------------
+Write-Host "Creating full ZIP..."
 if (Test-Path $FullZip) { Remove-Item $FullZip }
-Compress-Archive -Path dist\* -DestinationPath $FullZip
 
-# ----------------------------
-# CREATE PATCH ZIP
-# ----------------------------
+if (!(Test-Path "dist\LifeRPG")) {
+    Write-Error "dist\LifeRPG not found!"
+    exit 1
+}
 
-Write-Host "Checking for previous release..."
+Compress-Archive -Path "dist\LifeRPG\*" `
+                 -DestinationPath $FullZip `
+                 -Force
+
+# ----------------------------------------
+# Create Patch ZIP
+# ----------------------------------------
+Write-Host "Checking previous release..."
 
 $PreviousTag = gh release list --limit 1 --json tagName --jq ".[0].tagName"
 
 if ($PreviousTag) {
 
-    Write-Host "Previous release: $PreviousTag"
-
-    gh release download $PreviousTag --pattern manifest.json --dir prev_manifest
-
-    $OldManifest = Get-Content "prev_manifest/manifest.json" | ConvertFrom-Json
-    $NewManifest = Get-Content $ManifestFile | ConvertFrom-Json
+    Write-Host "Previous release found: $PreviousTag"
 
     if (Test-Path $PatchZip) { Remove-Item $PatchZip }
+
+    gh release download $PreviousTag `
+        --pattern manifest.json `
+        --dir prev_manifest
+
+    $OldManifest = Get-Content "prev_manifest/manifest.json" | ConvertFrom-Json
+    $NewManifest = Get-Content $Manifest | ConvertFrom-Json
 
     $ChangedFiles = @()
 
     foreach ($file in $NewManifest.files.PSObject.Properties.Name) {
         if ($OldManifest.files.$file -ne $NewManifest.files.$file) {
-            $ChangedFiles += "dist\$file"
+            $ChangedFiles += "dist\LifeRPG\$file"
         }
     }
 
     if ($ChangedFiles.Count -gt 0) {
-        Compress-Archive -Path $ChangedFiles -DestinationPath $PatchZip
-        Write-Host "Patch zip created with $($ChangedFiles.Count) files."
-    } else {
-        Write-Host "No file changes detected. Skipping patch zip."
+        Compress-Archive -Path $ChangedFiles `
+                         -DestinationPath $PatchZip `
+                         -Force
+
+        Write-Host "Patch created with $($ChangedFiles.Count) changed files."
+    }
+    else {
+        Write-Host "No changes detected. Skipping patch."
     }
 
     Remove-Item -Recurse -Force prev_manifest
 }
 else {
-    Write-Host "No previous release found. Skipping patch."
+    Write-Host "No previous release found. Skipping patch creation."
 }
 
-# ----------------------------
-# GIT
-# ----------------------------
-
+# ----------------------------------------
+# Git Commit & Tag
+# ----------------------------------------
+Write-Host "Committing..."
 git add .
 git commit -m "Release $Version"
-git tag -a $Tag -m "Life RPG $Version"
+
+Write-Host "Tagging..."
+git tag -a $Tag -m "LifeRPG $Version"
+
+Write-Host "Pushing..."
 git push origin main
 git push origin $Tag
 
-# ----------------------------
-# CREATE RELEASE
-# ----------------------------
+# ----------------------------------------
+# Create Release
+# ----------------------------------------
+Write-Host "Creating GitHub release..."
 
 gh release create $Tag `
     $FullZip `
-    $ManifestFile `
+    $Manifest `
     --repo $Repo `
-    --title "Life RPG $Version" `
+    --title "LifeRPG $Version" `
     --notes "Automated release $Version"
 
 if (Test-Path $PatchZip) {
@@ -111,6 +137,6 @@ if (Test-Path $PatchZip) {
 }
 
 Write-Host ""
-Write-Host "========================================="
+Write-Host "====================================="
 Write-Host " Release $Version complete."
-Write-Host "========================================="
+Write-Host "====================================="

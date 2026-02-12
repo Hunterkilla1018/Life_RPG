@@ -32,7 +32,7 @@ jobs:
           pip install pyinstaller
 
       # ----------------------------------------
-      # Clean build folders (fix dist error)
+      # Clean build folders
       # ----------------------------------------
       - name: Clean build folders
         shell: pwsh
@@ -66,9 +66,16 @@ jobs:
         run: |
           if (Test-Path LifeRPG_full.zip) { Remove-Item LifeRPG_full.zip }
 
-          Compress-Archive -Path dist\LifeRPG_Game\* `
+          if (!(Test-Path dist\LifeRPG)) {
+            Write-Error "dist\LifeRPG folder missing!"
+            exit 1
+          }
+
+          Compress-Archive -Path dist\LifeRPG\* `
                            -DestinationPath LifeRPG_full.zip `
                            -Force
+
+          Write-Host "Full ZIP created successfully."
 
       # ----------------------------------------
       # Create Patch ZIP (Auto Diff)
@@ -78,47 +85,9 @@ jobs:
         run: |
           $currentTag = "${{ github.ref_name }}"
 
+          git fetch --tags
+
           $previousTag = git tag --sort=-creatordate | Select-Object -Skip 1 -First 1
 
           if (-not $previousTag) {
-              Write-Host "No previous tag found. Skipping patch."
-              exit 0
-          }
-
-          Write-Host "Previous tag: $previousTag"
-
-          git fetch --tags
-
-          git show "$previousTag:manifest.json" > old_manifest.json
-
-          $old = Get-Content old_manifest.json | ConvertFrom-Json
-          $new = Get-Content manifest.json | ConvertFrom-Json
-
-          $changed = @()
-
-          foreach ($file in $new.files.PSObject.Properties.Name) {
-              if ($old.files.$file -ne $new.files.$file) {
-                  $changed += "dist\LifeRPG_Game\$file"
-              }
-          }
-
-          if ($changed.Count -eq 0) {
-              Write-Host "No changed files detected."
-              exit 0
-          }
-
-          Compress-Archive -Path $changed `
-                           -DestinationPath LifeRPG_patch.zip `
-                           -Force
-
-      # ----------------------------------------
-      # Upload Release Assets
-      # ----------------------------------------
-      - name: Upload Release Assets
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            dist/LifeRPG_Launcher/LifeRPG_Launcher.exe
-            LifeRPG_full.zip
-            LifeRPG_patch.zip
-            manifest.json
+              Write-Host "No previo
