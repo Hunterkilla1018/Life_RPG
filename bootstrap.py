@@ -1,6 +1,5 @@
 import os
 import json
-import hashlib
 import urllib.request
 import subprocess
 import threading
@@ -21,22 +20,17 @@ GITHUB_REPO = "Life_RPG"
 GAME_EXE = "LifeRPG.exe"
 FULL_INSTALL_ZIP = "LifeRPG_full.zip"
 PATCH_ZIP = "LifeRPG_patch.zip"
-MANIFEST_NAME = "manifest.json"
-
-# =========================
-# PATHS
-# =========================
 
 APPDATA = os.path.join(os.environ.get("APPDATA", os.getcwd()), "LifeRPG")
 RUNTIME = os.path.join(APPDATA, "runtime")
 CONFIG_FILE = os.path.join(APPDATA, "launcher.json")
 
-RUNTIME_MANIFEST = os.path.join(RUNTIME, MANIFEST_NAME)
 ZIP_PATH = os.path.join(RUNTIME, "download.zip")
 
 GAME_SAVE_DIR_NAME = "life_rpg_save"
 
 os.makedirs(RUNTIME, exist_ok=True)
+
 
 # =========================
 # HELPERS
@@ -45,13 +39,16 @@ os.makedirs(RUNTIME, exist_ok=True)
 def normalize_version(v):
     return v.lstrip("v").strip() if v else ""
 
+
 def download(url, dest):
     urllib.request.urlretrieve(url, dest)
+
 
 def fetch_latest_release():
     url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest"
     with urllib.request.urlopen(url, timeout=10) as r:
         return json.loads(r.read().decode())
+
 
 def load_config():
     cfg = {
@@ -73,6 +70,7 @@ def load_config():
 
     return cfg
 
+
 # =========================
 # LAUNCHER
 # =========================
@@ -87,7 +85,6 @@ class Launcher(tk.Tk):
 
         self.cfg = load_config()
         self.install_dir = tk.StringVar(value=self.cfg["install_dir"])
-
         self.latest_release = None
 
         self._ui()
@@ -97,9 +94,6 @@ class Launcher(tk.Tk):
 
     def _ui(self):
         ttk.Label(self, text=f"Life RPG Launcher v{LAUNCHER_VERSION}").pack(pady=10)
-
-        self.status = ttk.Label(self, text="")
-        self.status.pack()
 
         self.console = tk.Text(self, height=15)
         self.console.pack(fill="both", expand=True)
@@ -134,14 +128,27 @@ class Launcher(tk.Tk):
             self.log(f"Installed: {installed_version or 'none'}")
             self.log(f"Latest: {latest_version}")
 
-            if not self.install_dir.get():
+            install_path = self.install_dir.get()
+
+            if not install_path:
                 self.set_action("Install", self.install_full)
                 return
 
+            game_path = os.path.join(install_path, GAME_EXE)
+
+            # Version mismatch → update
             if installed_version != latest_version:
                 self.set_action("Update", self.update_game)
-            else:
-                self.set_action("Launch", self.launch)
+                return
+
+            # EXE missing → repair
+            if not os.path.exists(game_path):
+                self.log("Game executable missing. Repair required.")
+                self.set_action("Repair", self.install_full)
+                return
+
+            # Everything OK
+            self.set_action("Launch", self.launch)
 
         except Exception as e:
             self.log(f"Startup error: {e}")
@@ -153,7 +160,7 @@ class Launcher(tk.Tk):
         )
 
     # =========================
-    # UPDATE LOGIC
+    # UPDATE / INSTALL
     # =========================
 
     def download_asset(self, name):
@@ -186,7 +193,7 @@ class Launcher(tk.Tk):
             except Exception as e:
                 self.log(f"Patch failed: {e}")
 
-        # Fallback to full install
+        # Fallback to full
         self.log("Falling back to full install...")
 
         full_asset = next(
@@ -237,10 +244,7 @@ class Launcher(tk.Tk):
             json.dump(self.cfg, f, indent=4)
 
         self.log("Update complete.")
-
-        # Refresh UI state cleanly after update
         self.set_action("Launch", self.launch)
-
 
     # =========================
     # ACTIONS
@@ -263,8 +267,9 @@ class Launcher(tk.Tk):
         else:
             self.log("Game executable missing.")
 
+
 # =========================
-# ENTRY (WITH CRASH LOGGING)
+# ENTRY WITH CRASH LOGGING
 # =========================
 
 if __name__ == "__main__":
