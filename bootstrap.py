@@ -5,7 +5,6 @@ import urllib.request
 import subprocess
 import threading
 import zipfile
-import shutil
 import tkinter as tk
 from tkinter import ttk, filedialog
 from datetime import datetime
@@ -46,13 +45,6 @@ os.makedirs(RUNTIME, exist_ok=True)
 def normalize_version(v):
     return v.lstrip("v").strip() if v else ""
 
-def sha256(path):
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(8192), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
 def download(url, dest):
     urllib.request.urlretrieve(url, dest)
 
@@ -86,17 +78,17 @@ def load_config():
 # =========================
 
 class Launcher(tk.Tk):
+
     def __init__(self):
         super().__init__()
 
-        self.title("Life RPG :: Launcher")
+        self.title(f"Life RPG Launcher v{LAUNCHER_VERSION}")
         self.geometry("800x600")
 
         self.cfg = load_config()
         self.install_dir = tk.StringVar(value=self.cfg["install_dir"])
 
         self.latest_release = None
-        self.manifest = None
 
         self._ui()
         self.after(100, self.startup)
@@ -132,55 +124,95 @@ class Launcher(tk.Tk):
         threading.Thread(target=self.check_updates, daemon=True).start()
 
     def check_updates(self):
-        self.log("Checking GitHub release...")
-        self.latest_release = fetch_latest_release()
+        try:
+            self.log("Checking GitHub release...")
+            self.latest_release = fetch_latest_release()
 
-        latest_version = normalize_version(self.latest_release["tag_name"])
-        installed_version = normalize_version(self.cfg["installed_version"])
+            latest_version = normalize_version(self.latest_release["tag_name"])
+            installed_version = normalize_version(self.cfg["installed_version"])
 
-        self.log(f"Installed: {installed_version or 'none'}")
-        self.log(f"Latest: {latest_version}")
+            self.log(f"Installed: {installed_version or 'none'}")
+            self.log(f"Latest: {latest_version}")
 
-        if not self.install_dir.get():
-            self.set_action("Install", self.install_full)
-            return
+            if not self.install_dir.get():
+                self.set_action("Install", self.install_full)
+                return
 
-        if installed_version != latest_version:
-            self.set_action("Update", self.update_game)
-        else:
-            self.set_action("Launch", self.launch)
+            if installed_version != latest_version:
+                self.set_action("Update", self.update_game)
+            else:
+                self.set_action("Launch", self.launch)
+
+        except Exception as e:
+            self.log(f"Startup error: {e}")
 
     def set_action(self, text, command):
-        self.action_btn.config(text=text, command=lambda: threading.Thread(target=command, daemon=True).start())
+        self.action_btn.config(
+            text=text,
+            command=lambda: threading.Thread(target=command, daemon=True).start()
+        )
 
-    # ---------- UPDATE LOGIC ----------
+    # =========================
+    # UPDATE LOGIC
+    # =========================
 
     def download_asset(self, name):
-        asset = next((a for a in self.latest_release["assets"] if a["name"] == name), None)
+        asset = next(
+            (a for a in self.latest_release["assets"] if a["name"] == name),
+            None
+        )
         if not asset:
             return False
+
         download(asset["browser_download_url"], ZIP_PATH)
         return True
 
     def update_game(self):
         self.log("Attempting patch update...")
 
-        if self.download_asset(PATCH_ZIP):
-            if self.apply_zip(ZIP_PATH):
-                self.finalize_update()
-                return
+        patch_asset = next(
+            (a for a in self.latest_release["assets"]
+             if a["name"] == PATCH_ZIP),
+            None
+        )
 
-        self.log("Patch failed. Falling back to full install.")
-        self.install_full()
+        # Try patch first
+        if patch_asset:
+            try:
+                download(patch_asset["browser_download_url"], ZIP_PATH)
+                if self.apply_zip(ZIP_PATH):
+                    self.finalize_update()
+                    return
+            except Exception as e:
+                self.log(f"Patch failed: {e}")
+
+        # Fallback to full install
+        self.log("Falling back to full install...")
+
+        full_asset = next(
+            (a for a in self.latest_release["assets"]
+             if a["name"] == FULL_INSTALL_ZIP),
+            None
+        )
+
+        if not full_asset:
+            self.log("ERROR: Full install ZIP missing from release.")
+            return
+
+        download(full_asset["browser_download_url"], ZIP_PATH)
+
+        if self.apply_zip(ZIP_PATH):
+            self.finalize_update()
 
     def install_full(self):
         self.log("Downloading full install...")
+
         if not self.download_asset(FULL_INSTALL_ZIP):
-            self.log("ERROR: Full install zip missing.")
+            self.log("ERROR: Full install ZIP missing.")
             return
 
-        self.apply_zip(ZIP_PATH)
-        self.finalize_update()
+        if self.apply_zip(ZIP_PATH):
+            self.finalize_update()
 
     def apply_zip(self, zip_path):
         try:
@@ -189,19 +221,27 @@ class Launcher(tk.Tk):
                     if GAME_SAVE_DIR_NAME in name:
                         continue
                     z.extract(name, self.install_dir.get())
-            self.log("Files applied.")
+
+            self.log("Files applied successfully.")
             return True
+
         except Exception as e:
             self.log(f"ZIP ERROR: {e}")
             return False
 
     def finalize_update(self):
-        self.cfg["installed_version"] = normalize_version(self.latest_release["tag_name"])
+        self.cfg["installed_version"] = normalize_version(
+            self.latest_release["tag_name"]
+        )
+
         with open(CONFIG_FILE, "w") as f:
             json.dump(self.cfg, f, indent=4)
+
         self.log("Update complete.")
 
-    # ---------- ACTIONS ----------
+    # =========================
+    # ACTIONS
+    # =========================
 
     def browse(self):
         path = filedialog.askdirectory()
@@ -213,6 +253,7 @@ class Launcher(tk.Tk):
 
     def launch(self):
         exe = os.path.join(self.install_dir.get(), GAME_EXE)
+
         if os.path.exists(exe):
             subprocess.Popen([exe])
             self.destroy()
@@ -220,8 +261,13 @@ class Launcher(tk.Tk):
             self.log("Game executable missing.")
 
 # =========================
-# ENTRY
+# ENTRY (WITH CRASH LOGGING)
 # =========================
 
 if __name__ == "__main__":
-    Launcher().mainloop()
+    try:
+        Launcher().mainloop()
+    except Exception as e:
+        with open("launcher_error.log", "w") as f:
+            f.write(str(e))
+        raise
