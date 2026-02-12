@@ -230,14 +230,17 @@ class Launcher(tk.Tk):
             return False
 
     def finalize_update(self):
-        self.cfg["installed_version"] = normalize_version(
-            self.latest_release["tag_name"]
-        )
+        new_version = normalize_version(self.latest_release["tag_name"])
+        self.cfg["installed_version"] = new_version
 
         with open(CONFIG_FILE, "w") as f:
             json.dump(self.cfg, f, indent=4)
 
         self.log("Update complete.")
+
+        # Refresh UI state cleanly after update
+        self.set_action("Launch", self.launch)
+
 
     # =========================
     # ACTIONS
