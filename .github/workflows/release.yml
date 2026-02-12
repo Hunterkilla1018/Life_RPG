@@ -23,7 +23,7 @@ jobs:
           pip install pyinstaller
 
       # -------------------------------
-      # CLEAN BUILD DIRECTORIES
+      # CLEAN BUILD FOLDERS
       # -------------------------------
       - name: Clean build folders
         shell: powershell
@@ -46,13 +46,25 @@ jobs:
           pyinstaller LifeRPG_Game.spec --clean -y
 
       # -------------------------------
-      # BUILD GAME ZIP
+      # CREATE FULL INSTALL ZIP
       # -------------------------------
       - name: Create full install ZIP
         shell: powershell
         run: |
+          Write-Host "Dist directory contents:"
+          Get-ChildItem -Recurse dist
+
+          $exe = Get-ChildItem -Recurse dist -Filter LifeRPG.exe | Select-Object -First 1
+
+          if (-not $exe) {
+            Write-Error "LifeRPG.exe not found in dist folder"
+            exit 1
+          }
+
+          Write-Host "Found EXE at:" $exe.FullName
+
           New-Item -ItemType Directory -Force -Path package
-          Copy-Item dist\LifeRPG.exe package\
+          Copy-Item $exe.FullName package\LifeRPG.exe
 
           Compress-Archive -Path package\* -DestinationPath dist\LifeRPG_full.zip -Force
 
