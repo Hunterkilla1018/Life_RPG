@@ -49,8 +49,9 @@ jobs:
       # ----------------------------------------
       # Build Game
       # ----------------------------------------
-      - name: Build Game
-        run: pyinstaller LifeRPG_Game.spec --clean -y
+      - name: Build Launcher
+        run: pyinstaller LifeRPG_Launcher.spec --clean --onefile -y
+
 
       # ----------------------------------------
       # Generate Manifest
