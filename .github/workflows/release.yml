@@ -78,16 +78,68 @@ jobs:
           Write-Host "Full ZIP created successfully."
 
       # ----------------------------------------
-      # Create Patch ZIP (Auto Diff)
+      # Create Patch ZIP (Safe & Hardened)
       # ----------------------------------------
       - name: Create patch ZIP
         shell: pwsh
         run: |
-          $currentTag = "${{ github.ref_name }}"
+          $ErrorActionPreference = "Stop"
 
           git fetch --tags
 
-          $previousTag = git tag --sort=-creatordate | Select-Object -Skip 1 -First 1
+          $tags = git tag --sort=-creatordate
+
+          if (-not $tags) {
+              Write-Host 'No tags found. Skipping patch.'
+              exit 0
+          }
+
+          $previousTag = $tags | Select-Object -Skip 1 -First 1
 
           if (-not $previousTag) {
-              Write-Host "No previo
+              Write-Host 'Only one tag exists. Skipping patch.'
+              exit 0
+          }
+
+          Write-Host "Previous tag: $previousTag"
+
+          git show "$previousTag`:manifest.json" > old_manifest.json
+
+          if (!(Test-Path old_manifest.json)) {
+              Write-Host 'Previous manifest not found. Skipping patch.'
+              exit 0
+          }
+
+          $old = Get-Content old_manifest.json | ConvertFrom-Json
+          $new = Get-Content manifest.json | ConvertFrom-Json
+
+          $changed = @()
+
+          foreach ($file in $new.files.PSObject.Properties.Name) {
+              if ($old.files.$file -ne $new.files.$file) {
+                  $changed += "dist\LifeRPG\$file"
+              }
+          }
+
+          if ($changed.Count -eq 0) {
+              Write-Host 'No changed files detected.'
+              exit 0
+          }
+
+          Compress-Archive -Path $changed `
+                           -DestinationPath LifeRPG_patch.zip `
+                           -Force
+
+          Write-Host "Patch ZIP created with $($changed.Count) changed files."
+
+      # ----------------------------------------
+      # Upload Release Assets
+      # ----------------------------------------
+      - name: Upload Release Assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/LifeRPG_Launcher/LifeRPG_Launcher.exe
+            LifeRPG_full.zip
+            LifeRPG_patch.zip
+            manifest.json
