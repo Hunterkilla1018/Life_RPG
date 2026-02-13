@@ -1,77 +1,80 @@
-Write-Host "=== LifeRPG Model A Release Build ==="
+name: Build & Release LifeRPG
 
-# -----------------------------
-# Clean build folders
-# -----------------------------
-if (Test-Path build) { Remove-Item build -Recurse -Force }
-if (Test-Path dist) { Remove-Item dist -Recurse -Force }
-if (Test-Path package) { Remove-Item package -Recurse -Force }
-if (Test-Path verify) { Remove-Item verify -Recurse -Force }
+on:
+  push:
+    tags:
+      - "v*"
 
-# -----------------------------
-# Ensure PyInstaller
-# -----------------------------
-python -m pip install --upgrade pip
-pip install pyinstaller
+permissions:
+  contents: write
 
-# -----------------------------
-# Build Launcher
-# -----------------------------
-Write-Host "Building Launcher..."
-pyinstaller LifeRPG_Launcher.spec --clean -y
-if ($LASTEXITCODE -ne 0) { exit 1 }
+jobs:
+  build:
+    runs-on: windows-latest
 
-# -----------------------------
-# Build Game (ONEFILE REQUIRED)
-# -----------------------------
-Write-Host "Building Game..."
-pyinstaller LifeRPG.spec --clean -y
-if ($LASTEXITCODE -ne 0) { exit 1 }
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-# -----------------------------
-# Confirm Game EXE Exists
-# -----------------------------
-$gameExe = "dist\LifeRPG.exe"
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
-if (!(Test-Path $gameExe)) {
-    Write-Error "Game EXE not found at dist\LifeRPG.exe"
-    exit 1
-}
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
 
-Write-Host "Game EXE found."
+      - name: Clean build folders
+        shell: powershell
+        run: |
+          if (Test-Path build) { Remove-Item build -Recurse -Force }
+          if (Test-Path dist) { Remove-Item dist -Recurse -Force }
+          if (Test-Path package) { Remove-Item package -Recurse -Force }
+          if (Test-Path verify) { Remove-Item verify -Recurse -Force }
 
-# -----------------------------
-# Create Install ZIP
-# -----------------------------
-Write-Host "Creating LifeRPG_full.zip..."
-New-Item -ItemType Directory -Force -Path package | Out-Null
-Copy-Item $gameExe package\LifeRPG.exe
+      - name: Build Launcher
+        run: pyinstaller LifeRPG_Launcher.spec --clean -y
 
-Compress-Archive -Path package\* -DestinationPath dist\LifeRPG_full.zip -Force
+      - name: Build Game (onefile)
+        run: pyinstaller LifeRPG.spec --clean -y
 
-if (!(Test-Path "dist\LifeRPG_full.zip")) {
-    Write-Error "LifeRPG_full.zip was not created."
-    exit 1
-}
+      - name: Verify Game EXE
+        shell: powershell
+        run: |
+          if (!(Test-Path "dist\LifeRPG.exe")) {
+            Write-Error "Game EXE not found in dist folder"
+            exit 1
+          }
 
-Write-Host "ZIP created successfully."
+      - name: Create LifeRPG_full.zip
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path package | Out-Null
+          Copy-Item dist\LifeRPG.exe package\LifeRPG.exe
+          Compress-Archive -Path package\* -DestinationPath dist\LifeRPG_full.zip -Force
 
-# -----------------------------
-# Generate Manifest
-# -----------------------------
-Write-Host "Generating manifest..."
-Expand-Archive dist\LifeRPG_full.zip verify -Force
+      - name: Generate manifest.json
+        shell: powershell
+        run: |
+          Expand-Archive dist\LifeRPG_full.zip verify -Force
 
-$files = Get-ChildItem verify -Recurse -File
-$manifest = @{ files = @{} }
+          $files = Get-ChildItem verify -Recurse -File
+          $manifest = @{ files = @{} }
 
-foreach ($file in $files) {
-    $rel = $file.FullName.Substring((Resolve-Path verify).Path.Length + 1)
-    $hash = (Get-FileHash $file.FullName -Algorithm SHA256).Hash.ToLower()
-    $manifest.files[$rel] = $hash
-}
+          foreach ($file in $files) {
+            $rel = $file.FullName.Substring((Resolve-Path verify).Path.Length + 1)
+            $hash = (Get-FileHash $file.FullName -Algorithm SHA256).Hash.ToLower()
+            $manifest.files[$rel] = $hash
+          }
 
-$manifest | ConvertTo-Json -Depth 5 | Set-Content -Path dist\manifest.json -Encoding utf8
+          $manifest | ConvertTo-Json -Depth 5 | Set-Content dist\manifest.json -Encoding utf8
 
-Write-Host "Manifest generated."
-Write-Host "=== Release Build Complete ==="
+      - name: Upload Release Assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/LifeRPG_Launcher/LifeRPG_Launcher.exe
+            dist/LifeRPG_full.zip
+            dist/manifest.json
