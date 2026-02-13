@@ -34,7 +34,7 @@ jobs:
           if (Test-Path package) { Remove-Item package -Recurse -Force }
           if (Test-Path verify) { Remove-Item verify -Recurse -Force }
 
-      - name: Build Launcher
+      - name: Build Launcher (onefile)
         run: pyinstaller LifeRPG_Launcher.spec --clean -y
 
       - name: Build Game (onefile)
@@ -75,6 +75,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/LifeRPG_Launcher/LifeRPG_Launcher.exe
+            dist/LifeRPG_Launcher.exe
             dist/LifeRPG_full.zip
             dist/manifest.json
