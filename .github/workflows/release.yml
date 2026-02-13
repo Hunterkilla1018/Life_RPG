@@ -34,10 +34,19 @@ jobs:
           if (Test-Path package) { Remove-Item package -Recurse -Force }
           if (Test-Path verify) { Remove-Item verify -Recurse -Force }
 
-      - name: Build Launcher (onefile)
-        run: pyinstaller LifeRPG_Launcher.spec --clean -y
+      # --------------------------------
+      # Build Launcher (inject tag version)
+      # --------------------------------
+      - name: Build Launcher
+        shell: powershell
+        run: |
+          $env:LAUNCHER_VERSION = "${{ github.ref_name }}"
+          pyinstaller LifeRPG_Launcher.spec --clean -y
 
-      - name: Build Game (onefile)
+      # --------------------------------
+      # Build Game (onefile)
+      # --------------------------------
+      - name: Build Game
         run: pyinstaller LifeRPG.spec --clean -y
 
       - name: Verify Game EXE
@@ -48,6 +57,9 @@ jobs:
             exit 1
           }
 
+      # --------------------------------
+      # Create Installer ZIP
+      # --------------------------------
       - name: Create LifeRPG_full.zip
         shell: powershell
         run: |
@@ -55,6 +67,9 @@ jobs:
           Copy-Item dist\LifeRPG.exe package\LifeRPG.exe
           Compress-Archive -Path package\* -DestinationPath dist\LifeRPG_full.zip -Force
 
+      # --------------------------------
+      # Generate manifest.json
+      # --------------------------------
       - name: Generate manifest.json
         shell: powershell
         run: |
@@ -71,6 +86,9 @@ jobs:
 
           $manifest | ConvertTo-Json -Depth 5 | Set-Content dist\manifest.json -Encoding utf8
 
+      # --------------------------------
+      # Upload Release Assets
+      # --------------------------------
       - name: Upload Release Assets
         uses: softprops/action-gh-release@v2
         with:
