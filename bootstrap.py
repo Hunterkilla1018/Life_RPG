@@ -13,8 +13,7 @@ from datetime import datetime
 # VERSION
 # =========================
 
-raw_version = os.environ.get("LAUNCHER_VERSION", "dev")
-LAUNCHER_VERSION = raw_version.lstrip("v")
+LAUNCHER_VERSION = "1.7.0"
 
 GITHUB_OWNER = "Hunterkilla1018"
 GITHUB_REPO = "Life_RPG"
@@ -44,25 +43,22 @@ def sha256(path):
             h.update(chunk)
     return h.hexdigest()
 
-
 def normalize_version(v):
     return v.lstrip("v").strip() if v else ""
 
-
 def download(url, dest):
     urllib.request.urlretrieve(url, dest)
-
 
 def fetch_latest_release():
     url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest"
     with urllib.request.urlopen(url, timeout=10) as r:
         return json.loads(r.read().decode())
 
-
 def load_config():
     cfg = {
         "install_dir": "",
-        "installed_version": ""
+        "installed_version": "",
+        "dev_mode": False
     }
 
     if os.path.exists(CONFIG_FILE):
@@ -98,10 +94,26 @@ class Launcher(tk.Tk):
         self._ui()
         self.after(100, self.startup)
 
-    # ---------- UI ----------
+    # =========================
+    # UI
+    # =========================
 
     def _ui(self):
-        ttk.Label(self, text=f"Life RPG Launcher v{LAUNCHER_VERSION}").pack(pady=10)
+
+        header = ttk.Frame(self)
+        header.pack(fill="x")
+
+        ttk.Label(
+            header,
+            text=f"Life RPG Launcher v{LAUNCHER_VERSION}"
+        ).pack(side="left", padx=10, pady=10)
+
+        ttk.Button(
+            header,
+            text="⚙",
+            width=3,
+            command=self.open_settings
+        ).pack(side="right", padx=10)
 
         self.console = tk.Text(self, height=18)
         self.console.pack(fill="both", expand=True)
@@ -120,7 +132,81 @@ class Launcher(tk.Tk):
         self.console.insert("end", f"[{ts}] {msg}\n")
         self.console.see("end")
 
-    # ---------- STARTUP ----------
+    # =========================
+    # DEV SETTINGS
+    # =========================
+
+    def open_settings(self):
+        win = tk.Toplevel(self)
+        win.title("Launcher Settings")
+        win.geometry("350x240")
+
+        dev_var = tk.BooleanVar(value=self.cfg.get("dev_mode", False))
+
+        def toggle_dev():
+            self.cfg["dev_mode"] = dev_var.get()
+            with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+                json.dump(self.cfg, f, indent=4)
+
+        ttk.Checkbutton(
+            win,
+            text="Enable Developer Mode",
+            variable=dev_var,
+            command=toggle_dev
+        ).pack(pady=10)
+
+        ttk.Button(
+            win,
+            text="Select Local LifeRPG.exe...",
+            command=self.select_and_launch_local_exe
+        ).pack(pady=5)
+
+        ttk.Button(
+            win,
+            text="Open Runtime Folder",
+            command=lambda: os.startfile(RUNTIME)
+        ).pack(pady=5)
+
+        ttk.Button(
+            win,
+            text="Print Debug Info",
+            command=self.print_debug_info
+        ).pack(pady=5)
+
+    def select_and_launch_local_exe(self):
+        file_path = filedialog.askopenfilename(
+            title="Select LifeRPG.exe",
+            filetypes=[("Executable Files", "*.exe")]
+        )
+
+        if not file_path:
+            return
+
+        if not file_path.lower().endswith(".exe"):
+            self.log("Invalid file selected.")
+            return
+
+        if not os.path.exists(file_path):
+            self.log("File does not exist.")
+            return
+
+        self.log(f"Launching LOCAL EXE: {file_path}")
+
+        try:
+            subprocess.Popen([file_path], cwd=os.path.dirname(file_path))
+        except Exception as e:
+            self.log(f"Launch failed: {e}")
+
+    def print_debug_info(self):
+        self.log("=== DEBUG INFO ===")
+        self.log(f"Dev Mode: {self.cfg.get('dev_mode')}")
+        self.log(f"Install Dir: {self.install_dir.get()}")
+        self.log(f"Installed Version: {self.cfg.get('installed_version')}")
+        self.log(f"Latest Release: {self.latest_release['tag_name'] if self.latest_release else 'None'}")
+
+    # =========================
+    # STARTUP
+    # =========================
 
     def startup(self):
         threading.Thread(target=self.check_state, daemon=True).start()
@@ -154,7 +240,9 @@ class Launcher(tk.Tk):
         except Exception as e:
             self.log(f"Startup error: {e}")
 
-    # ---------- MANIFEST ----------
+    # =========================
+    # MANIFEST / VERIFY
+    # =========================
 
     def load_manifest(self):
         asset = next(
@@ -194,7 +282,9 @@ class Launcher(tk.Tk):
         self.log("Integrity verified.")
         return True
 
-    # ---------- ACTIONS ----------
+    # =========================
+    # ACTIONS
+    # =========================
 
     def set_action(self, text, command):
         self.action_btn.config(
