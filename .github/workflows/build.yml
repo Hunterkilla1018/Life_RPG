@@ -1,0 +1,115 @@
+name: Build & Release LifeRPG
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      # -------------------------------
+      # Checkout
+      # -------------------------------
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      # -------------------------------
+      # Setup Python
+      # -------------------------------
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # -------------------------------
+      # Install Dependencies
+      # -------------------------------
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pip install cryptography
+
+      # -------------------------------
+      # Build Launcher
+      # -------------------------------
+      - name: Build Launcher
+        run: |
+          pyinstaller LifeRPG_Launcher.spec --noconfirm
+
+      # -------------------------------
+      # Build Game
+      # -------------------------------
+      - name: Build Game
+        run: |
+          pyinstaller LifeRPG.spec --noconfirm
+
+      # -------------------------------
+      # Debug: Show dist contents
+      # -------------------------------
+      - name: Debug dist contents
+        shell: powershell
+        run: |
+          Write-Host "=== DIST CONTENTS ==="
+          Get-ChildItem dist -Recurse
+
+      # -------------------------------
+      # Locate Game EXE Dynamically
+      # -------------------------------
+      - name: Locate Game EXE
+        shell: powershell
+        run: |
+          $gameExe = Get-ChildItem -Path dist -Recurse -Filter LifeRPG.exe | Select-Object -First 1
+
+          if (-not $gameExe) {
+              Write-Error "Game EXE not found anywhere inside dist"
+              exit 1
+          }
+
+          Write-Host "Found Game EXE at: $($gameExe.FullName)"
+          New-Item -ItemType Directory -Force -Path package
+          Copy-Item $gameExe.FullName package\LifeRPG.exe
+
+      # -------------------------------
+      # Create Full Install ZIP
+      # -------------------------------
+      - name: Create LifeRPG_full.zip
+        shell: powershell
+        run: |
+          Compress-Archive -Path package\* -DestinationPath LifeRPG_full.zip -Force
+
+      # -------------------------------
+      # Generate manifest.json
+      # -------------------------------
+      - name: Generate manifest.json
+        shell: powershell
+        run: |
+          Expand-Archive LifeRPG_full.zip verify -Force
+
+          $files = Get-ChildItem verify -Recurse -File
+          $manifest = @{ files = @{} }
+
+          foreach ($file in $files) {
+            $rel = $file.FullName.Substring((Resolve-Path verify).Path.Length + 1)
+            $hash = (Get-FileHash $file.FullName -Algorithm SHA256).Hash.ToLower()
+            $manifest.files[$rel] = $hash
+          }
+
+          $manifest | ConvertTo-Json -Depth 5 | Set-Content -Path manifest.json -Encoding utf8
+
+          Write-Host "=== Generated Manifest ==="
+          Get-Content manifest.json
+
+      # -------------------------------
+      # Upload Release Assets
+      # -------------------------------
+      - name: Upload Release Assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/LifeRPG_Launcher.exe
+            LifeRPG_full.zip
+            manifest.json

@@ -37,9 +37,9 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    console=False,   # GUI app
-    disable_windowed_traceback=False,
+    console=False,
 )
+
 
 coll = COLLECT(
     exe,
