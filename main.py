@@ -1,4 +1,8 @@
-from app_gui import run_ui
+import liferpg.engine.player
+print(liferpg.engine.player.__file__)
+
+from liferpg.ui.tkinter_app import LifeRPGApp
 
 if __name__ == "__main__":
-    run_ui()
+    app = LifeRPGApp()
+    app.mainloop()

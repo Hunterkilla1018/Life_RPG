@@ -1,0 +1,15 @@
+# PyInstaller
+build/
+dist/
+
+# Packaging temp
+package/
+verify/
+
+# Python
+__pycache__/
+*.pyc
+
+# OS
+Thumbs.db
+.DS_Store
