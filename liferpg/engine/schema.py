@@ -2,6 +2,8 @@ SCHEMA_VERSION = 1
 
 DEFAULT_PLAYER = {
     "schema_version": SCHEMA_VERSION,
+    
+    "quests": {},
 
     "rank": 1,
     "total_navigation_data": 0,

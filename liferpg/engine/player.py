@@ -1,6 +1,7 @@
 from datetime import datetime
 from .save import load_player, save_player
 from .progression import xp_required_for_rank
+from .quest_manager import QuestManager
 
 
 class Player:
@@ -10,17 +11,53 @@ class Player:
         self.daily_recovery()
         self.recalculate_rank()
 
+        # Attach Quest Manager
+        self.quest_manager = QuestManager(self)
+
+    # -------------------------
+    # Task Completion Entry Point
+    # -------------------------
+
+    def complete_task(self, task):
+        """
+        Unified task completion pipeline.
+        """
+        xp = task.xp_reward()
+
+        # Apply XP normally (with quest notifications)
+        self.gain_navigation_data(xp)
+
+        # Notify quest that a task was completed
+        self.quest_manager.notify_task_completed(task)
+
+        self.save()
+
     # -------------------------
     # Progression
     # -------------------------
 
     def gain_navigation_data(self, amount):
+        """
+        Public XP pipeline (used for tasks).
+        This notifies quests.
+        """
+        self._apply_navigation_data(amount)
+
+        # Notify quests tracking navigation data
+        self.quest_manager.notify_navigation_data(amount)
+
+        self.save()
+
+    def _apply_navigation_data(self, amount):
+        """
+        Internal XP application WITHOUT quest notifications.
+        Used for quest rewards to avoid recursion.
+        """
         self.data["total_navigation_data"] += amount
         self.data["credits"] += amount // 5
         self.data["warp_stability"] += 1
 
         self.recalculate_rank()
-        self.save()
 
     def recalculate_rank(self):
         total = self.data["total_navigation_data"]
